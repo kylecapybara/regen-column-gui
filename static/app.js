@@ -12,7 +12,6 @@ const state = {
   valcoPosition: null,
   valcoChanging: false,
   connectedPreview: false,
-  previewMode: 'channel_select',
   mode: 'pump_only',
   bedVolumeMl: 100,
   calibration: { m: 0.1694, b: -0.727 },
@@ -65,8 +64,6 @@ function stepTemplate() {
     direction: 'CW',
     channels: [1, 2, 3, 4, 5, 6, 7, 8],
     primary_channel: 1,
-    diluent_channel: '',
-    dilution_factor: 2,
     valco_output_position: 1,
   };
 }
@@ -122,9 +119,6 @@ function modeKind() {
   if (state.mode === 'channel_select' && state.connected.valco && hasPump) {
     return 'channel_select';
   }
-  if (state.mode === 'inlet_select' && state.connected.valco && hasPump) {
-    return 'inlet_select';
-  }
   if (state.mode === 'pump_only' && (!state.connected.valco || !hasPump)) {
     return 'pump_only';
   }
@@ -134,7 +128,6 @@ function modeKind() {
 function modeLabel() {
   const mode = modeKind();
   if (mode === 'channel_select') return 'Channel-Select Mode';
-  if (mode === 'inlet_select') return 'Inlet-Select Mode';
   return 'Pump-Only Mode';
 }
 
@@ -146,8 +139,8 @@ function applyConnectedPreview() {
   state.connected.pump_b = true;
   state.connected.valco = true;
   state.valcoPosition = state.valcoPosition || 1;
-  if (!['channel_select', 'inlet_select'].includes(state.mode)) {
-    state.mode = state.previewMode;
+  if (state.mode !== 'channel_select') {
+    state.mode = 'channel_select';
   }
 }
 
@@ -159,6 +152,11 @@ function stepFlowMlpMin(step) {
   const flow = clampNumber(step.flow_rate);
   if (step.flow_unit === 'BV/hr') {
     return flow * bedVolume() / 60;
+  }
+  if (step.flow_unit === 'RPM') {
+    const m = clampNumber(el.calibrationSlopeInput.value || state.calibration.m);
+    const b = clampNumber(el.calibrationInterceptInput.value || state.calibration.b);
+    return m * Math.min(flow, 100) + b;
   }
   return flow;
 }
@@ -174,17 +172,39 @@ function stepVolumeMl(step) {
 function stepRpm(step) {
   const m = clampNumber(el.calibrationSlopeInput.value || state.calibration.m);
   const b = clampNumber(el.calibrationInterceptInput.value || state.calibration.b);
-  let flow = stepFlowMlpMin(step);
-  if (modeKind() === 'channel_select') {
-    const dilutionFactor = clampNumber(step.dilution_factor || 0);
-    if (step.diluent_channel && dilutionFactor > 1) {
-      flow = flow / dilutionFactor;
-    }
+  if (step.flow_unit === 'RPM') {
+    return Math.min(clampNumber(step.flow_rate), 100);
   }
+  const flow = stepFlowMlpMin(step);
   if (m === 0) {
     return null;
   }
   return (flow - b) / m;
+}
+
+function cappedFlowRateForUnit(unit) {
+  const m = clampNumber(el.calibrationSlopeInput.value || state.calibration.m);
+  const b = clampNumber(el.calibrationInterceptInput.value || state.calibration.b);
+  const maxFlowMlpMin = m * 100 + b;
+  if (unit === 'RPM') return 100;
+  if (unit === 'BV/hr') {
+    const bed = bedVolume();
+    return bed > 0 ? maxFlowMlpMin * 60 / bed : 0;
+  }
+  return maxFlowMlpMin;
+}
+
+function capStepFlowRate(step) {
+  if (!step || (step.step_type || 'flow') === 'pause') {
+    return false;
+  }
+  const rpm = stepRpm(step);
+  if (rpm === null || rpm <= 100) {
+    return false;
+  }
+  const capped = Math.max(0, cappedFlowRateForUnit(step.flow_unit || 'mL/min'));
+  step.flow_rate = Number.isFinite(capped) ? Number(capped.toFixed(3)) : 0;
+  return true;
 }
 
 function solutionOptionsHtml(selectedValue) {
@@ -295,12 +315,12 @@ function renderValcoOutputs() {
 function renderSteps() {
   const mode = modeKind();
   const channelSelectMode = mode === 'channel_select';
-  const inletSelectMode = mode === 'inlet_select';
   const pumpOnlyMode = mode === 'pump_only';
 
   el.stepsContainer.innerHTML = state.steps.map((step) => {
     step.direction = normalizeDirection(step.direction);
     step.channels = normalizeChannels(step.channels);
+    capStepFlowRate(step);
     const rpm = stepRpm(step);
     const rpmLabel = rpm === null ? 'RPM unavailable' : `${rpm.toFixed(1)} RPM`;
     const rpmClass = rpm !== null && rpm > 100 ? 'rpm-display warning' : 'rpm-display';
@@ -338,33 +358,12 @@ function renderSteps() {
               </select>
             </label>
           ` : ''}
-          ${inletSelectMode ? `<div class="step-label">of</div>` : ''}
-          ${inletSelectMode ? `
-            <label>
-              <span>Solution</span>
-              <select data-field="solution_position">
-                <option value="">Select solution</option>
-                ${solutionOptionsHtml(step.solution_position)}
-              </select>
-            </label>
-          ` : ''}
           ${channelSelectMode ? `
             <label>
               <span>Primary Channel</span>
               <select data-field="primary_channel">
                 ${availableChannelOptionsHtml(step.primary_channel)}
               </select>
-            </label>
-            <label>
-              <span>Diluent Channel</span>
-              <select data-field="diluent_channel">
-                <option value="">None</option>
-                ${channelOptionsHtml(step.diluent_channel)}
-              </select>
-            </label>
-            <label>
-              <span>Dilution Factor</span>
-              <input data-field="dilution_factor" type="number" min="1" step="0.1" value="${escapeHtml(String(step.dilution_factor || 2))}">
             </label>
           ` : ''}
           <label>
@@ -376,9 +375,10 @@ function renderSteps() {
             <select data-field="flow_unit">
               <option value="mL/min" ${ (step.flow_unit || 'mL/min') === 'mL/min' ? 'selected' : ''}>mL/min</option>
               <option value="BV/hr" ${ (step.flow_unit || 'mL/min') === 'BV/hr' ? 'selected' : ''}>BV/hr</option>
+              <option value="RPM" ${ (step.flow_unit || 'mL/min') === 'RPM' ? 'selected' : ''}>RPM</option>
             </select>
           </label>
-          ${inletSelectMode || channelSelectMode ? `
+          ${channelSelectMode ? `
             <label>
               <span>Effluent To</span>
               <select data-field="valco_output_position">
@@ -434,10 +434,8 @@ function renderSteps() {
 
   if (pumpOnlyMode) {
     el.methodWarning.textContent = 'Solution references are hidden in Pump-Only Mode.';
-  } else if (inletSelectMode) {
-    el.methodWarning.textContent = 'Valco output labels are shown; lowest-numbered labeled position defaults to waste.';
   } else if (channelSelectMode) {
-    el.methodWarning.textContent = 'Primary channel selects the solution inlet; optional diluent is blended at the same total flow.';
+    el.methodWarning.textContent = 'Channel-Select Mode is active; flow rates above 100 RPM are capped automatically.';
   }
   updateMethodTotals();
 }
@@ -485,12 +483,13 @@ function syncModeUi(forceRender = false) {
     : connectedPumps === 1
       ? (state.connected.pump_a ? 'Pump A' : 'Pump B')
       : '';
-  el.modeBadge.textContent = modeLabel();
+  if (el.modeBadge) {
+    el.modeBadge.textContent = modeLabel();
+  }
   el.connectionBadge.textContent = connectedPumps
     ? (mode === 'pump_only' ? `${pumpLabel} connected` : `${pumpLabel} + Valco connected`)
     : 'Disconnected';
-  el.solutionsPanel.classList.toggle('hidden', mode !== 'inlet_select');
-  el.valcoOutputsPanel.classList.toggle('hidden', !['inlet_select', 'channel_select'].includes(mode));
+  el.solutionsPanel.classList.add('hidden');
   el.pumpAStatusText.textContent = state.connected.pump_a ? 'Connected' : 'Disconnected';
   el.pumpBStatusText.textContent = state.connected.pump_b ? 'Connected' : 'Disconnected';
   el.valcoStatusText.textContent = state.connected.valco ? 'Connected' : 'Disconnected';
@@ -498,11 +497,6 @@ function syncModeUi(forceRender = false) {
   el.pumpBDot.className = `dot ${state.connected.pump_b ? 'connected' : 'disconnected'}`;
   el.valcoDot.className = `dot ${state.connected.valco ? 'connected' : 'disconnected'}`;
 
-  if (el.modeSelect) {
-    const hasPump = state.connected.pump_a || state.connected.pump_b;
-    el.modeSelect.closest('.status-card').classList.toggle('hidden', !state.connected.valco || !hasPump);
-    el.modeSelect.value = state.mode;
-  }
   if (forceRender || !state.settingsLoaded || modeChanged) {
     renderSolutions();
     renderChannelConfig();
@@ -566,7 +560,7 @@ function updateStatusFields(status) {
   state.active.pump_b = !!status.pump_b_active;
   state.valcoPosition = status.valco_position || null;
   state.valcoChanging = !!status.valco_changing;
-  state.mode = status.mode || 'pump_only';
+  state.mode = status.mode === 'pump_only' ? 'pump_only' : 'channel_select';
   applyConnectedPreview();
   state.running = !!status.running;
   state.isPaused = !!status.is_paused;
@@ -759,25 +753,22 @@ function handleStepChange(event) {
   }
   if (field === 'primary_channel') {
     step.primary_channel = Number(event.target.value);
-    if (step.diluent_channel === step.primary_channel) {
-      step.diluent_channel = '';
-    }
-  }
-  if (field === 'diluent_channel') {
-    step.diluent_channel = event.target.value;
-  }
-  if (field === 'dilution_factor') {
-    step.dilution_factor = event.target.value;
   }
   if (field === 'valco_output_position') {
     step.valco_output_position = Number(event.target.value);
   }
+  if (field === 'flow_rate' || field === 'flow_unit') {
+    const wasCapped = capStepFlowRate(step);
+    if (wasCapped) {
+      const flowInput = row.querySelector('[data-field="flow_rate"]');
+      if (flowInput) {
+        flowInput.value = String(step.flow_rate);
+      }
+    }
+  }
 
   // Update RPM display for this row in-place to keep edits responsive
-  const m = clampNumber(el.calibrationSlopeInput.value || state.calibration.m);
-  const b = clampNumber(el.calibrationInterceptInput.value || state.calibration.b);
-  const flow_mlpmin = stepFlowMlpMin(step);
-  const rpm = m === 0 ? null : (flow_mlpmin - b) / m;
+  const rpm = stepRpm(step);
   const rpmElem = row.querySelector('.rpm-display');
   if (rpmElem) {
     if (rpm === null) {
@@ -856,8 +847,6 @@ function serializeSteps() {
       data.flow_rate = step.flow_rate;
       data.flow_unit = step.flow_unit;
       data.primary_channel = step.primary_channel || 1;
-      data.diluent_channel = step.diluent_channel || '';
-      data.dilution_factor = step.dilution_factor || 2;
     }
 
     return data;
@@ -956,8 +945,6 @@ async function loadMethodFromFile(file) {
     direction: normalizeDirection(step.direction),
     channels: normalizeChannels(step.channels),
     primary_channel: step.primary_channel || 1,
-    diluent_channel: step.diluent_channel || '',
-    dilution_factor: step.dilution_factor || 2,
     valco_output_position: step.valco_output_position || 1,
   }));
   if (data.warning) {
@@ -1073,37 +1060,11 @@ function installEvents() {
     localStorage.setItem('lab-theme', theme);
   });
 
-  if (el.modeSelect) {
-    el.modeSelect.addEventListener('change', async (e) => {
-      const newMode = e.target.value;
-      if (state.connectedPreview) {
-        state.previewMode = newMode;
-        state.mode = newMode;
-        applyConnectedPreview();
-        syncModeUi(true);
-        updateHardwareVisuals(state.valcoPosition);
-        return;
-      }
-      try {
-        const data = await fetchJson('/set_mode', {
-          method: 'POST',
-          body: JSON.stringify({ mode: newMode }),
-        });
-        state.mode = data.mode;
-        syncModeUi(true);
-      } catch (error) {
-        setBanner('', error.message);
-      }
-    });
-  }
-
   if (el.connectedPreviewSwitch) {
     el.connectedPreviewSwitch.addEventListener('change', async (event) => {
       state.connectedPreview = event.target.checked;
       if (state.connectedPreview) {
-        state.previewMode = ['channel_select', 'inlet_select'].includes(state.mode)
-          ? state.mode
-          : 'channel_select';
+        state.mode = 'channel_select';
       } else {
         await syncStatus();
         setBanner('', '');
@@ -1127,6 +1088,17 @@ function installEvents() {
   if (el.closeChannelsModalBtn) {
     el.closeChannelsModalBtn.addEventListener('click', () => {
       el.channelsModal.classList.add('hidden');
+    });
+  }
+
+  if (el.openValcoOutputsModalBtn) {
+    el.openValcoOutputsModalBtn.addEventListener('click', () => {
+      el.valcoOutputsModal.classList.remove('hidden');
+    });
+  }
+  if (el.closeValcoOutputsModalBtn) {
+    el.closeValcoOutputsModalBtn.addEventListener('click', () => {
+      el.valcoOutputsModal.classList.add('hidden');
     });
   }
 
@@ -1157,7 +1129,8 @@ function cacheElements() {
     'saveMethodBtn', 'loadMethodBtn', 'methodFileInput', 'addStepBtn', 'methodWarning', 'runMethodBtn',
     'stopMethodBtn', 'runStateText', 'currentStepText', 'timeRemainingText', 'runError', 'runMessage',
     'saveCalibrationBtn', 'calibrationSlopeInput', 'calibrationInterceptInput',
-    'cancelCalibrationBtn', 'resumeMethodBtn', 'channelsModal', 'openChannelsModalBtn', 'closeChannelsModalBtn', 'channelsGrid', 'valcoOutputsPanel', 'valcoOutputsGrid', 'modeSelect',
+    'cancelCalibrationBtn', 'resumeMethodBtn', 'channelsModal', 'openChannelsModalBtn', 'closeChannelsModalBtn', 'channelsGrid', 'valcoOutputsGrid',
+    'openValcoOutputsModalBtn', 'closeValcoOutputsModalBtn', 'valcoOutputsModal',
     'pumpADevice', 'pumpBDevice', 'valveDevice', 'pumpAActivityText', 'pumpBActivityText', 'valveActivityText', 'valvePositionText', 'connectedPreviewSwitch'
   ].forEach((id) => {
     el[id] = document.getElementById(id);

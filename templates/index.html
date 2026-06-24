@@ -29,14 +29,6 @@
           </select>
         </div>
         <div class="status-card">
-          <span class="status-label">Mode</span>
-          <select id="modeSelect" style="margin-top: 6px; width: 100%; padding: 6px 10px; font-size: 0.9rem; border-radius: 8px;">
-            <option value="channel_select">Channel-Select Mode</option>
-            <option value="inlet_select">Inlet-Select Mode</option>
-          </select>
-          <strong id="modeBadge">Pump-Only</strong>
-        </div>
-        <div class="status-card">
           <span class="status-label">Connection</span>
           <strong id="connectionBadge">Disconnected</strong>
         </div>
@@ -163,16 +155,6 @@
         <div class="solutions-grid" id="solutionsGrid"></div>
       </section>
 
-      <section class="panel hidden" id="valcoOutputsPanel">
-        <div class="panel-head">
-          <div>
-            <p class="panel-kicker">Valco</p>
-            <h2>Outputs</h2>
-        </div>
-    </div>
-        <div class="solutions-grid" id="valcoOutputsGrid"></div>
-      </section>
-
       <section class="panel">
         <div class="panel-head">
           <div>
@@ -190,6 +172,7 @@
             </div>
             <button type="button" class="ghost-button" id="openCalibrationBtn" style="margin-left: 10px;">Calibration/BV Settings</button>
             <button type="button" class="ghost-button" id="openChannelsModalBtn">Assign Channels</button>
+            <button type="button" class="ghost-button" id="openValcoOutputsModalBtn">Assign Valco Outputs</button>
           </div>
           <div class="toolbar">
             <button type="button" class="ghost-button" id="saveMethodBtn">Save Method</button>
@@ -272,6 +255,16 @@
           <button type="button" class="ghost-button" id="closeChannelsModalBtn">Close</button>
         </div>
         <div class="single-col-grid" id="channelsGrid"></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay hidden" id="valcoOutputsModal">
+      <div class="modal-content">
+        <div class="modal-head">
+          <h2>Valco Output Assignment</h2>
+          <button type="button" class="ghost-button" id="closeValcoOutputsModalBtn">Close</button>
+        </div>
+        <div class="single-col-grid" id="valcoOutputsGrid"></div>
       </div>
     </div>
   </div>

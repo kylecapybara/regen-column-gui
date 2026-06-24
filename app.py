@@ -123,8 +123,6 @@ def _normalize_steps(steps: list[dict[str, Any]], mode: str) -> list[dict[str, A
                     "direction": "CW",
                     "channels": [1, 2, 3, 4, 5, 6, 7, 8],
                     "primary_channel": None,
-                    "diluent_channel": None,
-                    "dilution_factor": 0.0,
                     "valco_output_position": None,
                 }
             )
@@ -152,24 +150,9 @@ def _normalize_steps(steps: list[dict[str, Any]], mode: str) -> list[dict[str, A
                     "solution_name": "",
                     "direction": "CW",
                     "channels": [],
+                    "valco_output_position": None,
                 }
             )
-
-            diluent_channel = step.get("diluent_channel")
-            if diluent_channel not in (None, ""):
-                diluent_channel = _safe_float(diluent_channel, f"Step {index} diluent channel")
-                if not (1 <= diluent_channel <= 8):
-                    raise ValueError(f"Step {index} diluent channel must be between 1 and 8.")
-                if diluent_channel == primary_channel:
-                    raise ValueError(f"Step {index} diluent channel cannot be the same as the primary channel.")
-                dilution_factor = _safe_float(step.get("dilution_factor"), f"Step {index} dilution factor")
-                if dilution_factor <= 1:
-                    raise ValueError(f"Step {index} dilution factor must be greater than 1.")
-                normalized_step["diluent_channel"] = int(diluent_channel)
-                normalized_step["dilution_factor"] = dilution_factor
-            else:
-                normalized_step["diluent_channel"] = None
-                normalized_step["dilution_factor"] = 0.0
 
             valco_output_position = step.get("valco_output_position")
             if valco_output_position in (None, ""):
@@ -187,8 +170,6 @@ def _normalize_steps(steps: list[dict[str, Any]], mode: str) -> list[dict[str, A
                     "direction": _normalize_step_direction(step.get("direction"), f"Step {index} direction"),
                     "channels": _normalize_step_channels(step.get("channels"), f"Step {index} channels"),
                     "primary_channel": None,
-                    "diluent_channel": None,
-                    "dilution_factor": 0.0,
                     "valco_output_position": step.get("valco_output_position"),
                 }
             )
@@ -197,14 +178,31 @@ def _normalize_steps(steps: list[dict[str, Any]], mode: str) -> list[dict[str, A
     return normalized
 
 
-def _step_to_flow_mlpmin(step: dict[str, Any], bed_volume_ml: float) -> tuple[float, str]:
+def _flow_from_rpm(rpm: float, calibration_m: float, calibration_b: float) -> float:
+    return calibration_m * rpm + calibration_b
+
+
+def _step_to_flow_mlpmin(
+    step: dict[str, Any],
+    bed_volume_ml: float,
+    calibration_m: float,
+    calibration_b: float,
+) -> tuple[float, str]:
     flow_rate = float(step["flow_rate"])
     unit = step["flow_unit"]
     if unit == "mL/min":
         return flow_rate, "mL/min"
     if unit == "BV/hr":
         return flow_rate * bed_volume_ml / 60.0, "mL/min"
+    if unit == "RPM":
+        return _flow_from_rpm(min(flow_rate, 100.0), calibration_m, calibration_b), "mL/min"
     raise ValueError(f"Unsupported flow unit: {unit}")
+
+
+def _rpm_for_step_flow(step: dict[str, Any], flow_mlpmin: float, calibration_m: float, calibration_b: float) -> float:
+    if step["flow_unit"] == "RPM":
+        return min(float(step["flow_rate"]), 100.0)
+    return min(_rpm_from_flow(flow_mlpmin, calibration_m, calibration_b), 100.0)
 
 
 def _step_to_volume_ml(step: dict[str, Any], bed_volume_ml: float) -> float:
@@ -217,7 +215,7 @@ def _step_to_volume_ml(step: dict[str, Any], bed_volume_ml: float) -> float:
     raise ValueError(f"Unsupported volume unit: {unit}")
 
 
-def _serialize_step(step: dict[str, Any], full_mode: bool) -> str:
+def _serialize_step(step: dict[str, Any]) -> str:
     if step.get("step_type") == "pause":
         return f"Pause {step['duration']:g} s"
     volume = step["volume"]
@@ -227,13 +225,11 @@ def _serialize_step(step: dict[str, Any], full_mode: bool) -> str:
     direction = _normalize_step_direction(step.get("direction"), "Step direction")
     channels = _normalize_step_channels(step.get("channels"), "Step channels")
     channels_label = ",".join(str(channel) for channel in channels)
-    if full_mode and step.get("solution_name"):
-        return f"Flow {volume:g} {volume_unit} of {step['solution_name']} at {flow_rate:g} {flow_unit} {direction} ch:{channels_label}"
     return f"Flow {volume:g} {volume_unit} at {flow_rate:g} {flow_unit} {direction} ch:{channels_label}"
 
 
 STEP_PATTERN = re.compile(
-    r"^(?:Flow\s+(?P<volume>-?\d+(?:\.\d+)?)\s+(?P<volume_unit>mL|BV)(?:\s+of\s+(?P<solution>.+?)\s+at|\s+at)\s+(?P<flow_rate>-?\d+(?:\.\d+)?)\s+(?P<flow_unit>mL/min|BV/hr)(?:\s+(?P<direction>CW|CCW))?(?:\s+ch:(?P<channels>[1-8](?:,[1-8])*))?|Pause\s+(?P<duration>-?\d+(?:\.\d+)?)\s+s)$"
+    r"^(?:Flow\s+(?P<volume>-?\d+(?:\.\d+)?)\s+(?P<volume_unit>mL|BV)(?:\s+of\s+(?P<solution>.+?)\s+at|\s+at)\s+(?P<flow_rate>-?\d+(?:\.\d+)?)\s+(?P<flow_unit>mL/min|BV/hr|RPM)(?:\s+(?P<direction>CW|CCW))?(?:\s+ch:(?P<channels>[1-8](?:,[1-8])*))?|Pause\s+(?P<duration>-?\d+(?:\.\d+)?)\s+s)$"
 )
 
 
@@ -381,12 +377,10 @@ def _validate_run_payload(payload: dict[str, Any]) -> tuple[list[dict[str, Any]]
         raise ValueError("No Reglo ICC pump is connected.")
 
     mode = (payload.get("mode") or _current_mode()).strip().lower()
-    if mode == "full":
-        mode = "inlet_select"
-    if mode not in {"channel_select", "inlet_select", "pump_only"}:
+    if mode not in {"channel_select", "pump_only"}:
         raise ValueError("Invalid mode.")
-    if state.valco_connected and mode not in {"channel_select", "inlet_select"}:
-        raise ValueError("Valco is connected; use channel_select or inlet_select mode.")
+    if state.valco_connected and mode != "channel_select":
+        raise ValueError("Valco is connected; use channel_select mode.")
     if not state.valco_connected and mode != "pump_only":
         raise ValueError("Valco is not connected; use pump_only mode.")
 
@@ -407,8 +401,6 @@ def _validate_run_payload(payload: dict[str, Any]) -> tuple[list[dict[str, Any]]
             _ensure_channel_available(channel, f"Step {index}")
         if mode == "channel_select":
             _ensure_channel_available(step["primary_channel"], f"Step {index} primary channel")
-            if step.get("diluent_channel"):
-                _ensure_channel_available(step["diluent_channel"], f"Step {index} diluent channel")
 
     bed_volume_ml = _safe_float(payload.get("bed_volume_ml", state.bed_volume_ml), "Bed volume")
     if bed_volume_ml <= 0:
@@ -472,9 +464,7 @@ def _run_method(payload: dict[str, Any]) -> None:
     try:
         steps, solution_config, channel_config, valco_output_config, bed_volume_ml, calibration_m, calibration_b, mode = _validate_run_payload(payload)
         channel_select_mode = mode == "channel_select"
-        inlet_select_mode = mode == "inlet_select"
         pump_only_mode = mode == "pump_only"
-        full_mode = inlet_select_mode
 
         def _pump_for_channel(channel: int) -> reglo_ICC:
             if 1 <= channel <= 4:
@@ -495,8 +485,6 @@ def _run_method(payload: dict[str, Any]) -> None:
             if pump_b_channels and state.pump_b is not None:
                 state.pump_b.command_all(command, which=pump_b_channels)
 
-        solution_lookup = _build_solution_lookup(solution_config)
-
         def resolve_output_position(step: dict[str, Any], index: int) -> int:
             position = step.get("valco_output_position")
             if position in (None, "", 0):
@@ -516,10 +504,6 @@ def _run_method(payload: dict[str, Any]) -> None:
             return label or f"Position {position}"
 
         def validate_rpm(index: int, rpm: float) -> None:
-            if rpm > 100:
-                raise ValueError(
-                    f"Step {index} requires {rpm:.2f} RPM which exceeds the 100 RPM maximum. Reduce the flow rate."
-                )
             if rpm < 0:
                 raise ValueError(f"Step {index} requires {rpm:.2f} RPM, which is below zero. Check calibration and flow rate.")
 
@@ -530,7 +514,7 @@ def _run_method(payload: dict[str, Any]) -> None:
                 expanded_steps.append({"index": index, "step_type": "pause", "duration": step.get("duration", 0)})
                 continue
 
-            flow_mlpmin = _step_to_flow_mlpmin(step, bed_volume_ml)[0]
+            flow_mlpmin = _step_to_flow_mlpmin(step, bed_volume_ml, calibration_m, calibration_b)[0]
             volume_ml = _step_to_volume_ml(step, bed_volume_ml)
             if volume_ml <= 0:
                 raise ValueError(f"Step {index} volume must be greater than zero.")
@@ -546,16 +530,10 @@ def _run_method(payload: dict[str, Any]) -> None:
 
             if channel_select_mode:
                 primary_channel = step["primary_channel"]
-                dilution_factor = step["dilution_factor"]
-                primary_flow = flow_mlpmin / dilution_factor if dilution_factor else flow_mlpmin
-                channel_rpms[primary_channel] = _rpm_from_flow(primary_flow, calibration_m, calibration_b)
+                rpm = _rpm_for_step_flow(step, flow_mlpmin, calibration_m, calibration_b)
+                flow_mlpmin = _flow_from_rpm(rpm, calibration_m, calibration_b)
+                channel_rpms[primary_channel] = rpm
                 channels.append(primary_channel)
-
-                diluent_channel = step.get("diluent_channel")
-                if diluent_channel:
-                    diluent_flow = flow_mlpmin * (dilution_factor - 1) / dilution_factor
-                    channel_rpms[diluent_channel] = _rpm_from_flow(diluent_flow, calibration_m, calibration_b)
-                    channels.append(diluent_channel)
 
                 categories = [
                     _normalize_solution_category(channel_config.get(channel, {}).get("category"))
@@ -574,24 +552,9 @@ def _run_method(payload: dict[str, Any]) -> None:
                 category = categories[0] if categories else "Other"
             else:
                 channels = step["channels"]
-                rpm = _rpm_from_flow(flow_mlpmin, calibration_m, calibration_b)
+                rpm = _rpm_for_step_flow(step, flow_mlpmin, calibration_m, calibration_b)
+                flow_mlpmin = _flow_from_rpm(rpm, calibration_m, calibration_b)
                 channel_rpms = {channel: rpm for channel in channels}
-                if inlet_select_mode:
-                    if solution_position in (None, "", 0):
-                        if solution_name:
-                            solution_position = solution_lookup.get(solution_name.lower())
-                    if solution_position in (None, "", 0):
-                        raise ValueError(f"Step {index} references a solution but no valve position is assigned.")
-                    solution_position = int(solution_position)
-                    solution = solution_config.get(solution_position, {})
-                    solution_name = _format_solution_name(solution)
-                    category = _normalize_solution_category(solution.get("category"))
-                    if previous_category == "Acid" and category == "Base":
-                        raise ValueError(f"Step {index} is Base after an Acid step. Acid/base adjacency is not allowed.")
-                    if previous_category == "Base" and category == "Acid":
-                        raise ValueError(f"Step {index} is Acid after a Base step. Acid/base adjacency is not allowed.")
-                    if category in {"Acid", "Base"}:
-                        previous_category = category
 
             for channel, rpm in channel_rpms.items():
                 validate_rpm(index, rpm)
@@ -648,11 +611,6 @@ def _run_method(payload: dict[str, Any]) -> None:
                 if channel_select_mode:
                     state.current_step_label = (
                         f"Step {step['index']}: Flow {step['volume_ml']:.3g} mL via {step['solution_name']} "
-                        f"at {step['flow_mlpmin']:.3g} mL/min to {output_label(step['output_position'])}"
-                    )
-                elif inlet_select_mode:
-                    state.current_step_label = (
-                        f"Step {step['index']}: Flow {step['volume_ml']:.3g} mL of {step['solution_name']} "
                         f"at {step['flow_mlpmin']:.3g} mL/min to {output_label(step['output_position'])}"
                     )
                 else:
@@ -861,12 +819,10 @@ def pause_ack() -> Any:
 def set_mode() -> Any:
     payload = request.get_json(force=True, silent=True) or {}
     mode = (payload.get("mode") or "").strip().lower()
-    if mode == "full":
-        mode = "inlet_select"
-    if mode not in {"channel_select", "inlet_select", "pump_only"}:
+    if mode not in {"channel_select", "pump_only"}:
         return jsonify({"ok": False, "error": "Invalid mode."}), 400
-    if state.valco_connected and mode not in {"channel_select", "inlet_select"}:
-        return jsonify({"ok": False, "error": "Valco is connected; use channel_select or inlet_select mode."}), 400
+    if state.valco_connected and mode != "channel_select":
+        return jsonify({"ok": False, "error": "Valco is connected; use channel_select mode."}), 400
     if not state.valco_connected and mode != "pump_only":
         return jsonify({"ok": False, "error": "Valco is not connected; use pump_only mode."}), 400
     if mode != "pump_only" and not (state.pump_a_connected or state.pump_b_connected):
@@ -949,12 +905,10 @@ def save_method() -> Any:
         filename += ".txt"
 
     mode = (payload.get("mode") or _current_mode()).strip().lower()
-    if mode == "full":
-        mode = "inlet_select"
-    if mode not in {"channel_select", "inlet_select", "pump_only"}:
+    if mode not in {"channel_select", "pump_only"}:
         return jsonify({"ok": False, "error": "Invalid mode."}), 400
-    if state.valco_connected and mode not in {"channel_select", "inlet_select"}:
-        return jsonify({"ok": False, "error": "Valco is connected; use channel_select or inlet_select mode."}), 400
+    if state.valco_connected and mode != "channel_select":
+        return jsonify({"ok": False, "error": "Valco is connected; use channel_select mode."}), 400
     if not state.valco_connected and mode != "pump_only":
         return jsonify({"ok": False, "error": "Valco is not connected; use pump_only mode."}), 400
     if mode != "pump_only" and not (state.pump_a_connected or state.pump_b_connected):
@@ -965,9 +919,7 @@ def save_method() -> Any:
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
 
-    full_mode = mode == "inlet_select"
-
-    lines = [_serialize_step(step, full_mode=full_mode) for step in steps]
+    lines = [_serialize_step(step) for step in steps]
     target = METHODS_DIR / filename
     target.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return jsonify({"ok": True, "path": str(target), "filename": filename})
