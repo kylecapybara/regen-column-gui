@@ -166,18 +166,9 @@
               <span>Bed Volume</span>
               <strong id="bedVolumeReadout">100.0 mL</strong>
             </div>
-            <div class="readout-card compact">
-              <span>Calibration</span>
-              <strong id="calibrationReadout">y = 0.1694x - 0.727</strong>
-            </div>
             <button type="button" class="ghost-button" id="openCalibrationBtn" style="margin-left: 10px;">Calibration/BV Settings</button>
             <button type="button" class="ghost-button" id="openChannelsModalBtn">Assign Channels</button>
             <button type="button" class="ghost-button" id="openValcoOutputsModalBtn">Assign Valco Outputs</button>
-          </div>
-          <div class="toolbar">
-            <button type="button" class="ghost-button" id="saveMethodBtn">Save Method</button>
-            <button type="button" class="ghost-button" id="loadMethodBtn">Load Method</button>
-            <button type="button" class="ghost-button" id="addStepBtn">Add Step</button>
           </div>
         </div>
 
@@ -194,10 +185,14 @@
             <span>Total BV:</span>
             <strong id="totalVolumeBv">0.0 BV</strong>
           </div>
+          <div class="summary-actions">
+            <button type="button" class="ghost-button" id="saveMethodBtn">Save Method</button>
+            <button type="button" class="ghost-button" id="loadMethodBtn">Load Method</button>
+            <button type="button" class="ghost-button" id="addStepBtn">Add Step</button>
+          </div>
         </div>
 
         <div class="method-legend">
-          <span>Live RPM estimates update from the calibration settings and bed volume.</span>
           <span id="methodWarning" class="warning-text"></span>
         </div>
 
@@ -243,7 +238,6 @@
         <span class="toggle-rail" aria-hidden="true"><span></span></span>
         <span>
           <strong>Valco connected mode</strong>
-          <small>Preview the connected layout without hardware</small>
         </span>
       </label>
     </section>

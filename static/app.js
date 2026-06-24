@@ -432,11 +432,7 @@ function renderSteps() {
     row.addEventListener('dragend', handleDragEnd);
   });
 
-  if (pumpOnlyMode) {
-    el.methodWarning.textContent = 'Solution references are hidden in Pump-Only Mode.';
-  } else if (channelSelectMode) {
-    el.methodWarning.textContent = 'Channel-Select Mode is active; flow rates above 100 RPM are capped automatically.';
-  }
+  el.methodWarning.textContent = '';
   updateMethodTotals();
 }
 
@@ -610,7 +606,6 @@ function updateStatusFields(status) {
   }
 
   el.bedVolumeReadout.textContent = `${Number(state.bedVolumeMl).toFixed(1)} mL`;
-  el.calibrationReadout.textContent = `y = ${Number(state.calibration.m).toFixed(3)}x + ${Number(state.calibration.b).toFixed(3)}`;
   el.runStateText.textContent = state.running ? 'Running' : 'Idle';
   el.currentStepText.textContent = status.current_step_label || 'None';
   el.timeRemainingText.textContent = typeof state.timeRemaining === 'number' ? formatTime(state.timeRemaining) : '--:--';
@@ -1037,7 +1032,6 @@ function installEvents() {
       b: clampNumber(el.calibrationInterceptInput.value),
     };
     el.bedVolumeReadout.textContent = `${Number(state.bedVolumeMl).toFixed(1)} mL`;
-    el.calibrationReadout.textContent = `y = ${state.calibration.m.toFixed(3)}x + ${state.calibration.b.toFixed(3)}`;
     el.conversionSettingsPanel.classList.add('hidden');
     renderSteps();
   });
@@ -1125,7 +1119,7 @@ function cacheElements() {
   [
     'themeSelect', 'modeBadge', 'connectionBadge', 'refreshPortsBtn', 'pumpAPortSelect', 'pumpBPortSelect', 'valcoPortSelect', 'connectBtn',
     'pumpADot', 'pumpBDot', 'valcoDot', 'pumpAStatusText', 'pumpBStatusText', 'valcoStatusText', 'connectMessage', 'bedVolumeInput',
-    'bedVolumeReadout', 'calibrationReadout', 'totalTime', 'totalVolumeMl', 'totalVolumeBv', 'openCalibrationBtn', 'editCalibrationBtn', 'conversionSettingsPanel', 'calibrationPanel', 'solutionsPanel', 'solutionsGrid', 'stepsContainer',
+    'bedVolumeReadout', 'totalTime', 'totalVolumeMl', 'totalVolumeBv', 'openCalibrationBtn', 'editCalibrationBtn', 'conversionSettingsPanel', 'calibrationPanel', 'solutionsPanel', 'solutionsGrid', 'stepsContainer',
     'saveMethodBtn', 'loadMethodBtn', 'methodFileInput', 'addStepBtn', 'methodWarning', 'runMethodBtn',
     'stopMethodBtn', 'runStateText', 'currentStepText', 'timeRemainingText', 'runError', 'runMessage',
     'saveCalibrationBtn', 'calibrationSlopeInput', 'calibrationInterceptInput',
