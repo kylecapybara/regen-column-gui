@@ -11,6 +11,8 @@ const state = {
   },
   valcoPosition: null,
   valcoChanging: false,
+  connectedPreview: false,
+  previewMode: 'channel_select',
   mode: 'pump_only',
   bedVolumeMl: 100,
   calibration: { m: 0.1694, b: -0.727 },
@@ -134,6 +136,19 @@ function modeLabel() {
   if (mode === 'channel_select') return 'Channel-Select Mode';
   if (mode === 'inlet_select') return 'Inlet-Select Mode';
   return 'Pump-Only Mode';
+}
+
+function applyConnectedPreview() {
+  if (!state.connectedPreview) {
+    return;
+  }
+  state.connected.pump_a = true;
+  state.connected.pump_b = true;
+  state.connected.valco = true;
+  state.valcoPosition = state.valcoPosition || 1;
+  if (!['channel_select', 'inlet_select'].includes(state.mode)) {
+    state.mode = state.previewMode;
+  }
 }
 
 function bedVolume() {
@@ -552,6 +567,7 @@ function updateStatusFields(status) {
   state.valcoPosition = status.valco_position || null;
   state.valcoChanging = !!status.valco_changing;
   state.mode = status.mode || 'pump_only';
+  applyConnectedPreview();
   state.running = !!status.running;
   state.isPaused = !!status.is_paused;
   state.currentStepIndex = status.current_step_index;
@@ -1060,6 +1076,14 @@ function installEvents() {
   if (el.modeSelect) {
     el.modeSelect.addEventListener('change', async (e) => {
       const newMode = e.target.value;
+      if (state.connectedPreview) {
+        state.previewMode = newMode;
+        state.mode = newMode;
+        applyConnectedPreview();
+        syncModeUi(true);
+        updateHardwareVisuals(state.valcoPosition);
+        return;
+      }
       try {
         const data = await fetchJson('/set_mode', {
           method: 'POST',
@@ -1070,6 +1094,28 @@ function installEvents() {
       } catch (error) {
         setBanner('', error.message);
       }
+    });
+  }
+
+  if (el.connectedPreviewSwitch) {
+    el.connectedPreviewSwitch.addEventListener('change', async (event) => {
+      state.connectedPreview = event.target.checked;
+      if (state.connectedPreview) {
+        state.previewMode = ['channel_select', 'inlet_select'].includes(state.mode)
+          ? state.mode
+          : 'channel_select';
+      } else {
+        await syncStatus();
+        setBanner('', '');
+        return;
+      }
+      applyConnectedPreview();
+      syncModeUi(true);
+      updateHardwareVisuals(state.valcoPosition);
+      setBanner(
+        state.connectedPreview ? 'Previewing connected hardware layout.' : '',
+        ''
+      );
     });
   }
 
@@ -1112,7 +1158,7 @@ function cacheElements() {
     'stopMethodBtn', 'runStateText', 'currentStepText', 'timeRemainingText', 'runError', 'runMessage',
     'saveCalibrationBtn', 'calibrationSlopeInput', 'calibrationInterceptInput',
     'cancelCalibrationBtn', 'resumeMethodBtn', 'channelsModal', 'openChannelsModalBtn', 'closeChannelsModalBtn', 'channelsGrid', 'valcoOutputsPanel', 'valcoOutputsGrid', 'modeSelect',
-    'pumpADevice', 'pumpBDevice', 'valveDevice', 'pumpAActivityText', 'pumpBActivityText', 'valveActivityText', 'valvePositionText'
+    'pumpADevice', 'pumpBDevice', 'valveDevice', 'pumpAActivityText', 'pumpBActivityText', 'valveActivityText', 'valvePositionText', 'connectedPreviewSwitch'
   ].forEach((id) => {
     el[id] = document.getElementById(id);
   });
