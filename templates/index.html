@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reglo ICC Local Control</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero compact-hero">
+      <div>
+        <p class="eyebrow">Local lab control</p>
+        <h1>Dual Reglo ICC + Valco Method Runner</h1>
+        <p class="lede"></p>
+      </div>
+      <div class="hero-status">
+        <div class="status-card">
+          <span class="status-label">Theme</span>
+          <select id="themeSelect" style="margin-top: 6px; width: 100%; padding: 6px 10px; font-size: 0.9rem; border-radius: 8px;">
+            <option value="classic">Classic</option>
+            <option value="dark">Dark</option>
+            <option value="modern">Modern</option>
+            <option value="cyberpunk">Cyberpunk</option>
+            <option value="forest">Forest</option>
+            <option value="midnight">Midnight</option>
+            <option value="solarized">Solarized</option>
+            <option value="lavender">Lavender</option>
+          </select>
+        </div>
+        <div class="status-card">
+          <span class="status-label">Mode</span>
+          <select id="modeSelect" style="margin-top: 6px; width: 100%; padding: 6px 10px; font-size: 0.9rem; border-radius: 8px;">
+            <option value="channel_select">Channel-Select Mode</option>
+            <option value="inlet_select">Inlet-Select Mode</option>
+          </select>
+          <strong id="modeBadge">Pump-Only</strong>
+        </div>
+        <div class="status-card">
+          <span class="status-label">Connection</span>
+          <strong id="connectionBadge">Disconnected</strong>
+        </div>
+      </div>
+    </header>
+
+    <main class="stack">
+      <div class="top-row">
+        <section class="panel" id="devicesPanel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Devices</p>
+            <h2>Connection</h2>
+          </div>
+          <div class="toolbar">
+            <button type="button" class="ghost-button" id="refreshPortsBtn">Refresh Ports</button>
+            
+          </div>
+        </div>
+
+        <div class="device-grid">
+          <label>
+            <span>Reglo ICC Pump A</span>
+            <select id="pumpAPortSelect"></select>
+          </label>
+          <label>
+            <span>Reglo ICC Pump B</span>
+            <select id="pumpBPortSelect"></select>
+          </label>
+          <label>
+            <span>Valco Selector Valve</span>
+            <select id="valcoPortSelect"></select>
+          </label>
+          <div class="device-actions">
+            <button type="button" id="connectBtn">Connect</button>
+          </div>
+        </div>
+        <div class="hardware-panel devices-hardware-status" id="hardwarePanel">
+          <div class="hardware-device pump-device" id="pumpADevice">
+            <div class="pump-visual" aria-hidden="true">
+              <img src="{{ url_for('static', filename='assets/reglo-icc-pump.png') }}" alt="">
+              <span class="pump-flow"></span>
+              <span class="pump-pulse"></span>
+            </div>
+            <div>
+              <p class="panel-kicker"><span class="dot" id="pumpADot"></span>Pump A</p>
+              <strong id="pumpAStatusText">Disconnected</strong>
+              <span class="device-activity" id="pumpAActivityText">Idle</span>
+            </div>
+          </div>
+          <div class="hardware-device pump-device" id="pumpBDevice">
+            <div class="pump-visual" aria-hidden="true">
+              <img src="{{ url_for('static', filename='assets/reglo-icc-pump.png') }}" alt="">
+              <span class="pump-flow"></span>
+              <span class="pump-pulse"></span>
+            </div>
+            <div>
+              <p class="panel-kicker"><span class="dot" id="pumpBDot"></span>Pump B</p>
+              <strong id="pumpBStatusText">Disconnected</strong>
+              <span class="device-activity" id="pumpBActivityText">Idle</span>
+            </div>
+          </div>
+          <div class="hardware-device valve-device" id="valveDevice">
+            <div class="pixel-valve" aria-hidden="true">
+              <span class="valve-port p1"></span>
+              <span class="valve-port p2"></span>
+              <span class="valve-port p3"></span>
+              <span class="valve-port p4"></span>
+              <span class="valve-port p5"></span>
+              <span class="valve-port p6"></span>
+              <span class="valve-core">
+                <span id="valvePositionText">--</span>
+              </span>
+            </div>
+            <div>
+              <p class="panel-kicker"><span class="dot" id="valcoDot"></span>Selector Valve</p>
+              <strong id="valcoStatusText">Disconnected</strong>
+              <span class="device-activity" id="valveActivityText">Not connected</span>
+            </div>
+          </div>
+        </div>
+        <div class="inline-message" id="connectMessage"></div>
+      </section>
+        <!-- Run Control moved up to sit alongside Devices -->
+        <section class="panel" id="runControlPanel">
+        <div class="panel-head">
+          <div>
+              <p class="panel-kicker">Run Control & Status</p>
+              <h2>Execution</h2>
+          </div>
+          <div class="toolbar">
+              <button type="button" id="runMethodBtn">Run Method</button>
+              <button type="button" id="resumeMethodBtn" class="hidden">Resume</button>
+              <button type="button" class="danger-button" id="stopMethodBtn">Stop</button>
+          </div>
+        </div>
+
+          <div class="status-grid">
+            <div class="status-box">
+              <span>Run State</span>
+              <strong id="runStateText">Idle</strong>
+            </div>
+            <div class="status-box">
+              <span>Current Step</span>
+              <strong id="currentStepText">None</strong>
+            </div>
+            <div class="status-box">
+              <span>Time Remaining</span>
+              <strong id="timeRemainingText">--:--</strong>
+          </div>
+        </div>
+          <div class="inline-message error" id="runError"></div>
+          <div class="inline-message" id="runMessage"></div>
+      </section>
+          </div>
+
+      <section class="panel hidden" id="solutionsPanel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Solutions</p>
+            <h2>Inlets</h2>
+          </div>
+        </div>
+        <div class="solutions-grid" id="solutionsGrid"></div>
+      </section>
+
+      <section class="panel hidden" id="valcoOutputsPanel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Valco</p>
+            <h2>Outputs</h2>
+        </div>
+    </div>
+        <div class="solutions-grid" id="valcoOutputsGrid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Method Builder</p>
+            <h2>Flow Steps</h2>
+          </div>
+          <div class="method-readouts">
+            <div class="readout-card compact">
+              <span>Bed Volume</span>
+              <strong id="bedVolumeReadout">100.0 mL</strong>
+            </div>
+            <div class="readout-card compact">
+              <span>Calibration</span>
+              <strong id="calibrationReadout">y = 0.1694x - 0.727</strong>
+            </div>
+            <button type="button" class="ghost-button" id="openCalibrationBtn" style="margin-left: 10px;">Calibration/BV Settings</button>
+            <button type="button" class="ghost-button" id="openChannelsModalBtn">Assign Channels</button>
+          </div>
+          <div class="toolbar">
+            <button type="button" class="ghost-button" id="saveMethodBtn">Save Method</button>
+            <button type="button" class="ghost-button" id="loadMethodBtn">Load Method</button>
+            <button type="button" class="ghost-button" id="addStepBtn">Add Step</button>
+          </div>
+        </div>
+
+        <div class="method-summary">
+          <div class="summary-item">
+            <span>Total Time:</span>
+            <strong id="totalTime">0.0 min</strong>
+          </div>
+          <div class="summary-item">
+            <span>Total Volume:</span>
+            <strong id="totalVolumeMl">0.0 mL</strong>
+          </div>
+          <div class="summary-item">
+            <span>Total BV:</span>
+            <strong id="totalVolumeBv">0.0 BV</strong>
+          </div>
+        </div>
+
+        <div class="method-legend">
+          <span>Live RPM estimates update from the calibration settings and bed volume.</span>
+          <span id="methodWarning" class="warning-text"></span>
+        </div>
+
+        <div id="stepsContainer" class="steps-container"></div>
+        <input type="file" id="methodFileInput" accept=".txt" hidden>
+      </section>
+
+      
+      <section class="panel hidden" id="conversionSettingsPanel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Bed Volume & Calibration</p>
+            <h2>Calibration/BV Settings</h2>
+          </div>
+        </div>
+
+        <div class="calibration-panel" id="calibrationPanel">
+          <div class="settings-grid">
+            <label>
+              <span>Bed Volume (mL)</span>
+              <input id="bedVolumeInput" type="number" min="0" step="0.1" value="100">
+            </label>
+            <label>
+              <span>Slope (m)</span>
+              <input id="calibrationSlopeInput" type="number" step="0.0001" value="0.1694">
+            </label>
+            <label>
+              <span>Intercept (b)</span>
+              <input id="calibrationInterceptInput" type="number" step="0.001" value="-0.727">
+            </label>
+          </div>
+          <div class="dialog-actions calibration-actions">
+            <button type="button" id="saveCalibrationBtn">Save Calibration</button>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <div class="modal-overlay hidden" id="channelsModal">
+      <div class="modal-content">
+        <div class="modal-head">
+          <h2>Pump Channel Assignment</h2>
+          <button type="button" class="ghost-button" id="closeChannelsModalBtn">Close</button>
+        </div>
+        <div class="single-col-grid" id="channelsGrid"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="{{ url_for('static', filename='app.js') }}?v={{ v }}"></script>
+</body>
+</html>

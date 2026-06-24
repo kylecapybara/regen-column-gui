@@ -1,0 +1,10 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+
+# Runtime/user-created method files
+methods/
+
+# Intermediate generated source asset; keep the final transparent PNG.
+static/assets/*-source.png
