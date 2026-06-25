@@ -220,7 +220,6 @@ h1 {
 .status-label,
 .status-box span,
 .readout-card span,
-.connection-status,
 .method-legend,
 .inline-message,
 label span {
@@ -343,7 +342,6 @@ label span {
   border-color: var(--accent-2);
 }
 
-.pixel-pump,
 .pixel-valve,
 .pump-visual {
   image-rendering: pixelated;
@@ -358,9 +356,10 @@ label span {
   filter: drop-shadow(7px 8px 0 rgba(0, 0, 0, 0.18));
 }
 
+/* Reduce pump image size by 15% for better layout */
 .pump-visual img {
-  width: 100%;
-  height: 100%;
+  width: 85%;
+  height: 85%;
   object-fit: contain;
   image-rendering: auto;
 }
@@ -402,194 +401,8 @@ label span {
   animation: pumpHeadPulse 0.48s steps(2, end) infinite;
 }
 
-.pixel-pump {
-  position: relative;
-  width: 146px;
-  height: 112px;
-}
-
-.pump-body {
-  position: absolute;
-  left: 4px;
-  top: 8px;
-  width: 102px;
-  height: 82px;
-  border: 6px solid #606d77;
-  background:
-    linear-gradient(135deg, #ffffff 0 42%, #c9d4dc 42% 66%, #edf3f7 66% 100%);
-  clip-path: polygon(18px 0, 93px 0, 102px 60px, 82px 82px, 0 82px, 0 18px);
-  box-shadow:
-    inset -11px -10px 0 rgba(101, 116, 128, 0.3),
-    7px 7px 0 rgba(0, 0, 0, 0.28);
-  filter: drop-shadow(-3px 0 0 #606d77) drop-shadow(0 -3px 0 #606d77);
-}
-
-.pump-panel {
-  position: absolute;
-  left: 37px;
-  top: 12px;
-  width: 57px;
-  height: 48px;
-  background: #1f282e;
-  border: 4px solid #56646d;
-  transform: skewX(8deg);
-  box-shadow: 0 5px 0 rgba(0, 0, 0, 0.28);
-  z-index: 2;
-}
-
-.pump-screen {
-  position: absolute;
-  left: 7px;
-  top: 5px;
-  width: 41px;
-  height: 18px;
-  background: #101719;
-  border: 3px solid #3a464d;
-}
-
-.pump-pad {
-  position: absolute;
-  left: 12px;
-  top: 31px;
-  width: 9px;
-  height: 9px;
-  background: #2f79ca;
-  box-shadow:
-    13px 0 0 #2f79ca,
-    26px 0 0 #2f79ca,
-    13px -11px 0 #2f79ca,
-    40px 0 0 #e23838;
-}
-
-.pump-head {
-  position: absolute;
-  right: 2px;
-  top: 54px;
-  width: 65px;
-  height: 42px;
-  border: 6px solid #606d77;
-  background: #f8fbfd;
-  box-shadow:
-    inset -9px -8px 0 rgba(120, 136, 148, 0.26),
-    -11px 15px 0 #34383b;
-  z-index: 3;
-}
-
-.pump-head::before {
-  content: "";
-  position: absolute;
-  left: 9px;
-  top: -14px;
-  width: 43px;
-  height: 12px;
-  background: repeating-linear-gradient(90deg, #edf3f7 0 7px, #9eacb6 7px 12px);
-  border-top: 4px solid #606d77;
-}
-
-.pump-rotor {
-  position: absolute;
-  right: -4px;
-  top: 77px;
-  width: 74px;
-  height: 14px;
-  background: #b5b8b9;
-  border: 4px solid #62686d;
-  box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
-  z-index: 5;
-}
-
-.pump-rotor::before {
-  content: "";
-  position: absolute;
-  left: 24px;
-  top: -17px;
-  width: 31px;
-  height: 31px;
-  border-radius: 999px;
-  background: #d4d2c8;
-  border: 5px solid #747b80;
-  box-shadow: inset -6px -6px 0 rgba(0, 0, 0, 0.16);
-}
-
-.pump-rollers {
-  position: absolute;
-  right: 20px;
-  top: 70px;
-  width: 36px;
-  height: 36px;
-  z-index: 4;
-}
-
-.pump-rollers i {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  background: #46525a;
-  box-shadow: inset -3px -3px 0 rgba(255, 255, 255, 0.24);
-}
-
-.pump-rollers i:nth-child(1) {
-  left: 13px;
-  top: 0;
-}
-
-.pump-rollers i:nth-child(2) {
-  right: 0;
-  top: 13px;
-}
-
-.pump-rollers i:nth-child(3) {
-  left: 13px;
-  bottom: 0;
-}
-
-.pump-rollers i:nth-child(4) {
-  left: 0;
-  top: 13px;
-}
-
-.pump-fluid {
-  position: absolute;
-  left: 84px;
-  top: 93px;
-  width: 51px;
-  height: 12px;
-  background: repeating-linear-gradient(90deg, #2f79ca 0 7px, #8fd7ff 7px 11px, transparent 11px 15px);
-  border: 3px solid #184d86;
-  z-index: 6;
-}
-
-.pump-base {
-  position: absolute;
-  left: 10px;
-  right: 0;
-  bottom: 0;
-  height: 17px;
-  background: #686f73;
-  border: 4px solid #3d4245;
-  box-shadow: inset -6px -4px 0 rgba(255, 255, 255, 0.18);
-}
-
 .pump-device.is-pumping {
   animation: pumpCabinetShake 0.22s steps(2, end) infinite;
-}
-
-.pump-device.is-pumping .pump-rollers {
-  animation: pumpRollers 0.45s steps(4, end) infinite;
-}
-
-.pump-device.is-pumping .pump-fluid {
-  animation: pixelFlow 0.38s steps(4, end) infinite;
-}
-
-.pump-device.is-pumping .pump-screen {
-  background:
-    repeating-linear-gradient(90deg, #80ff80 0 5px, #122015 5px 9px);
-}
-
-.pump-device.is-pumping .pump-rotor {
-  animation: rotorWag 0.45s steps(2, end) infinite;
-  background: #d0d3d4;
 }
 
 .pixel-valve {
@@ -721,9 +534,7 @@ button:hover {
 
 .device-grid,
 .settings-grid,
-.settings-summary,
-.status-grid,
-.dialog-card {
+.status-grid {
   display: grid;
   gap: 12px;
 }
@@ -768,13 +579,6 @@ button:focus {
   justify-content: flex-start;
 }
 
-.connection-status {
-  display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
-  margin-top: 14px;
-}
-
 .dot {
   display: inline-block;
   width: 10px;
@@ -796,23 +600,6 @@ button:focus {
 .settings-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: end;
-}
-
-.settings-summary {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-bottom: 12px;
-}
-
-.settings-actions-card {
-  display: flex;
-  align-items: end;
-  justify-content: flex-end;
-  padding: 14px 16px;
-  min-width: 250px;
-  border: 1px solid var(--line);
-  border-radius: 18px;
-  background: var(--panel);
-  box-shadow: var(--shadow);
 }
 
 .calibration-panel {
@@ -986,41 +773,6 @@ button:focus {
   border-color: rgba(165, 61, 42, 0.45);
 }
 
-.channels-field {
-  display: grid;
-  gap: 6px;
-  min-width: 160px;
-}
-
-.channel-toggle-group {
-  display: flex;
-  gap: 6px;
-}
-
-.channel-chip {
-  padding: 0.35rem 0.58rem;
-  min-width: 34px;
-  border-radius: 999px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  color: var(--muted);
-}
-
-.channel-chip.active {
-  border-color: rgba(93, 70, 48, 0.45);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 255, 255, 0.95));
-  color: var(--accent-2);
-}
-
-.channel-chip:hover {
-  filter: brightness(1.03);
-}
-
-.channel-summary {
-  font-size: 0.8rem;
-  color: var(--muted);
-}
-
 .method-legend {
   display: flex;
   justify-content: space-between;
@@ -1144,31 +896,6 @@ button:focus {
   font-size: 0.86rem;
 }
 
-dialog {
-  border: none;
-  border-radius: 24px;
-  padding: 0;
-  background: transparent;
-  color: var(--text);
-}
-
-dialog::backdrop {
-  background: rgba(17, 17, 17, 0.38);
-}
-
-.dialog-card {
-  width: min(460px, calc(100vw - 32px));
-  padding: 20px;
-  background: var(--panel-gradient);
-  border: 1px solid var(--line);
-  border-radius: 24px;
-  box-shadow: var(--shadow);
-}
-
-.dialog-card p {
-  color: var(--muted);
-}
-
 @keyframes pumpCabinetShake {
   0% {
     transform: translate(0, 0);
@@ -1178,15 +905,6 @@ dialog::backdrop {
   }
   100% {
     transform: translate(-2px, 2px);
-  }
-}
-
-@keyframes pumpRollers {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
   }
 }
 
@@ -1214,18 +932,6 @@ dialog::backdrop {
   }
 }
 
-@keyframes rotorWag {
-  0% {
-    transform: rotate(0deg);
-  }
-  50% {
-    transform: rotate(8deg);
-  }
-  100% {
-    transform: rotate(-8deg);
-  }
-}
-
 @keyframes valveSpin {
   from {
     transform: rotate(0deg);
@@ -1250,7 +956,6 @@ dialog::backdrop {
 @media (max-width: 1024px) {
   .device-grid,
   .settings-grid,
-  .settings-summary,
   .status-grid,
   .hardware-panel,
   .solutions-grid,
