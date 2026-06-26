@@ -508,12 +508,12 @@ def _perform_heartbeat() -> dict[str, Any]:
         had_valco = state.valco_connected
         if state.pump_a is not None:
             try:
-                results["pump_a"] = {"ok": True, "protocol_version": state.pump_a.handshake()}
+                results["pump_a"] = {"ok": True, "handshake_response": state.pump_a.handshake()}
             except Exception as exc:
                 _mark_pump_failed("pump_a", exc, results)
         if state.pump_b is not None:
             try:
-                results["pump_b"] = {"ok": True, "protocol_version": state.pump_b.handshake()}
+                results["pump_b"] = {"ok": True, "handshake_response": state.pump_b.handshake()}
             except Exception as exc:
                 _mark_pump_failed("pump_b", exc, results)
         if state.valco is not None:

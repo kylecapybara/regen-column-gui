@@ -39,8 +39,8 @@ class reglo_ICC():
             timeout=1
             )
         try:
-            self.handshake()
             self.setup()
+            self.handshake()
             self.get_calibration()
         except Exception:
             self.port.close()
@@ -52,20 +52,31 @@ class reglo_ICC():
 
         self.port.reset_input_buffer()
         self.port.write(code.encode()+self.CR)
-        response = self.port.readline().decode()
-        if len(response) > 2:
-            response = response[:-2]
-        return response
+        response = self.port.readline().decode(errors="replace")
+        return response.rstrip("\r\n")
 
     def handshake(self):
-        # Protocol command 0! returns the serial protocol version, e.g. "2".
-        response = self.raw_command("0!").strip()
-        if not response or response == "#":
-            raise ConnectionError("Reglo ICC did not respond to protocol handshake.")
-        if not response.isdigit():
-            raise ConnectionError(f"Unexpected Reglo ICC handshake response: {response!r}")
-        self.protocol_version = response
-        return response
+        # Some firmware answers 0! with the serial protocol version, while
+        # others only answer channel-level queries. Accept either as a real
+        # device handshake because both require a pump response.
+        protocol_response = self.raw_command("0!").strip()
+        if protocol_response.isdigit():
+            self.protocol_version = protocol_response
+            self.handshake_response = protocol_response
+            return protocol_response
+
+        calibration_response = self.raw_command("1r").strip()
+        try:
+            calibration = from_scientific(calibration_response)
+        except ValueError as exc:
+            if protocol_response:
+                raise ConnectionError(
+                    f"Unexpected Reglo ICC handshake responses: 0!={protocol_response!r}, 1r={calibration_response!r}"
+                ) from exc
+            raise ConnectionError("Reglo ICC did not respond to protocol handshake.") from exc
+        self.handshake_response = calibration_response
+        self.handshake_calibration = calibration
+        return calibration_response
 
     def setup(self,address=1):
         self.address = address
