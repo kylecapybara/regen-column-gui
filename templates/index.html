@@ -169,6 +169,7 @@
             <button type="button" class="ghost-button" id="openCalibrationBtn" style="margin-left: 10px;">Calibration/BV Settings</button>
             <button type="button" class="ghost-button" id="openChannelsModalBtn">Assign Channels</button>
             <button type="button" class="ghost-button" id="openValcoOutputsModalBtn">Assign Valco Outputs</button>
+            <button type="button" class="ghost-button" id="openValveMapBtn">Valve Map</button>
           </div>
         </div>
 
@@ -188,6 +189,8 @@
           <div class="summary-actions">
             <button type="button" class="ghost-button" id="saveMethodBtn">Save Method</button>
             <button type="button" class="ghost-button" id="loadMethodBtn">Load Method</button>
+            <button type="button" class="ghost-button" id="openMethodLibraryBtn">Method Library</button>
+            <button type="button" class="ghost-button" id="exportRunLogBtn">Export Run Log</button>
             <button type="button" class="ghost-button" id="addStepBtn">Add Step</button>
           </div>
         </div>
@@ -234,6 +237,13 @@
 
     <section class="panel preview-panel">
       <label class="preview-toggle">
+        <input id="showRpmSwitch" type="checkbox">
+        <span class="toggle-rail" aria-hidden="true"><span></span></span>
+        <span>
+          <strong>Show RPM</strong>
+        </span>
+      </label>
+      <label class="preview-toggle">
         <input id="connectedPreviewSwitch" type="checkbox">
         <span class="toggle-rail" aria-hidden="true"><span></span></span>
         <span>
@@ -259,6 +269,29 @@
           <button type="button" class="ghost-button" id="closeValcoOutputsModalBtn">Close</button>
         </div>
         <div class="single-col-grid" id="valcoOutputsGrid"></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay hidden" id="methodLibraryModal">
+      <div class="modal-content">
+        <div class="modal-head">
+          <h2>Saved Methods</h2>
+          <div class="toolbar">
+            <button type="button" class="ghost-button" id="refreshMethodLibraryBtn">Refresh</button>
+            <button type="button" class="ghost-button" id="closeMethodLibraryBtn">Close</button>
+          </div>
+        </div>
+        <div class="library-list" id="methodLibraryList"></div>
+      </div>
+    </div>
+
+    <div class="modal-overlay hidden" id="valveMapModal">
+      <div class="modal-content">
+        <div class="modal-head">
+          <h2>Valco Output Map</h2>
+          <button type="button" class="ghost-button" id="closeValveMapBtn">Close</button>
+        </div>
+        <div class="valve-map-grid" id="valveMapGrid"></div>
       </div>
     </div>
   </div>

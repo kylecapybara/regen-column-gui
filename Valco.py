@@ -1,4 +1,5 @@
 # Controller for VICI Valco Selector Valve
+import re
 import serial
 
 class Valco():
@@ -17,10 +18,41 @@ class Valco():
                                   stopbits=serial.STOPBITS_ONE,
                                   timeout=1
                                   )
-        
-        # Ensure that the valve is starting at 1
-        self.home()
-        self.current_position = 1
+        try:
+            self.handshake()
+        except Exception:
+            self.port.close()
+            raise
+
+    def raw_command(self, command):
+        self.port.reset_input_buffer()
+        self.port.write(command.encode("ascii") + self.CR)
+        return self.port.read_until(self.CR).decode("ascii", errors="replace").strip()
+
+    def handshake(self):
+        # CP displays the current position; AM displays the actuator mode.
+        position_response = self.raw_command("CP")
+        if not position_response:
+            raise ConnectionError("Valco actuator did not respond to position handshake.")
+        position = self._parse_position(position_response)
+
+        mode_response = self.raw_command("AM")
+        if not mode_response:
+            raise ConnectionError("Valco actuator did not respond to mode handshake.")
+        if not mode_response.startswith("AM"):
+            raise ConnectionError(f"Unexpected Valco mode response: {mode_response!r}")
+
+        self.current_position = position
+        self.mode_response = mode_response
+        return position_response
+
+    def _parse_position(self, response):
+        if response.startswith("E"):
+            raise ConnectionError(f"Valco position handshake returned error: {response!r}")
+        match = re.search(r"(\d+)\s*$", response)
+        if not match:
+            raise ConnectionError(f"Unexpected Valco position response: {response!r}")
+        return int(match.group(1))
 
     def set_position(self,position,direction=None):
         # Set valve to given position. If direction is not specified, will default to shortest path
@@ -32,14 +64,15 @@ class Valco():
             else:
                 # Move up to positin
                 command = f"CW{position:d}"
-        
-        self.current_position = position
+
         self.port.write(command.encode("ascii") + self.CR)
+        self.current_position = position
         return
-    
+
     def home(self):
         # Set valve to home (position 1)
         self.port.write("HM".encode("ascii") + self.CR)
+        self.current_position = 1
 
 # testing
 if __name__ == "__main__":

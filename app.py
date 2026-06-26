@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import csv
 import re
 import socket
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 from serial.tools import list_ports
 from werkzeug.utils import secure_filename
 
@@ -19,6 +21,8 @@ from reglo_ICC import reglo_ICC, to_scientific
 BASE_DIR = Path(__file__).resolve().parent
 METHODS_DIR = BASE_DIR / "methods"
 METHODS_DIR.mkdir(exist_ok=True)
+RUN_LOGS_DIR = BASE_DIR / "run_logs"
+RUN_LOGS_DIR.mkdir(exist_ok=True)
 
 app = Flask(__name__)
 
@@ -57,8 +61,63 @@ def _port_list() -> list[dict[str, str]]:
     return ports
 
 
+def _timestamp_slug() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _method_file_info(path: Path) -> dict[str, Any]:
+    stat = path.stat()
+    return {
+        "filename": path.name,
+        "size": stat.st_size,
+        "modified": stat.st_mtime,
+        "modified_label": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+def _method_files() -> list[dict[str, Any]]:
+    return sorted(
+        (_method_file_info(path) for path in METHODS_DIR.glob("*.txt") if path.is_file()),
+        key=lambda item: item["modified"],
+        reverse=True,
+    )
+
+
+def _run_log_files() -> list[Path]:
+    return sorted(
+        (path for path in RUN_LOGS_DIR.glob("*.csv") if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+
+
+def _write_run_log(path: Path, rows: list[dict[str, Any]]) -> None:
+    fieldnames = [
+        "timestamp",
+        "event",
+        "step",
+        "message",
+        "solution",
+        "channels",
+        "valco_output",
+        "duration_s",
+        "volume_ml",
+        "flow_ml_min",
+        "rpm",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+
 def _format_solution_name(solution: dict[str, Any]) -> str:
     return (solution.get("name") or "").strip()
+
+
+def _solution_key(name: Any) -> str:
+    return " ".join(str(name or "").strip().lower().split())
 
 
 def _normalize_solution_category(value: str | None) -> str:
@@ -215,7 +274,7 @@ def _step_to_volume_ml(step: dict[str, Any], bed_volume_ml: float) -> float:
     raise ValueError(f"Unsupported volume unit: {unit}")
 
 
-def _serialize_step(step: dict[str, Any]) -> str:
+def _serialize_step(step: dict[str, Any], channel_config: dict[int, dict[str, Any]] | None = None) -> str:
     if step.get("step_type") == "pause":
         return f"Pause {step['duration']:g} s"
     volume = step["volume"]
@@ -223,14 +282,24 @@ def _serialize_step(step: dict[str, Any]) -> str:
     flow_rate = step["flow_rate"]
     flow_unit = step["flow_unit"]
     direction = _normalize_step_direction(step.get("direction"), "Step direction")
-    channels = _normalize_step_channels(step.get("channels"), "Step channels")
+    primary_channel = step.get("primary_channel")
+    if primary_channel is not None:
+        channels = [int(primary_channel)]
+    else:
+        channels = _normalize_step_channels(step.get("channels"), "Step channels")
     channels_label = ",".join(str(channel) for channel in channels)
-    return f"Flow {volume:g} {volume_unit} at {flow_rate:g} {flow_unit} {direction} ch:{channels_label}"
+    solution_name = (step.get("solution_name") or "").strip()
+    if not solution_name and primary_channel is not None and channel_config is not None:
+        solution_name = _format_solution_name(channel_config.get(int(primary_channel), {}))
+    solution_label = f" of ch{primary_channel}: {solution_name or f'Channel {primary_channel}'}" if primary_channel is not None else ""
+    return f"Flow {volume:g} {volume_unit}{solution_label} at {flow_rate:g} {flow_unit} {direction} ch:{channels_label}"
 
 
 STEP_PATTERN = re.compile(
     r"^(?:Flow\s+(?P<volume>-?\d+(?:\.\d+)?)\s+(?P<volume_unit>mL|BV)(?:\s+of\s+(?P<solution>.+?)\s+at|\s+at)\s+(?P<flow_rate>-?\d+(?:\.\d+)?)\s+(?P<flow_unit>mL/min|BV/hr|RPM)(?:\s+(?P<direction>CW|CCW))?(?:\s+ch:(?P<channels>[1-8](?:,[1-8])*))?|Pause\s+(?P<duration>-?\d+(?:\.\d+)?)\s+s)$"
 )
+
+SOLUTION_IDENTITY_PATTERN = re.compile(r"^ch\s*(?P<channel>[1-8])\s*:\s*(?P<name>.*)$", re.IGNORECASE)
 
 
 def _parse_method_text(content: str) -> list[dict[str, Any]]:
@@ -260,10 +329,17 @@ def _parse_method_text(content: str) -> list[dict[str, Any]]:
             continue
 
         solution = (match.group("solution") or "").strip()
+        primary_channel = None
+        identity_match = SOLUTION_IDENTITY_PATTERN.match(solution)
+        if identity_match:
+            primary_channel = int(identity_match.group("channel"))
+            solution = identity_match.group("name").strip()
         direction = _normalize_step_direction(match.group("direction"), f"Step {len(steps) + 1} direction")
         channels_match = match.group("channels")
         channels = [int(value) for value in channels_match.split(",")] if channels_match else [1, 2, 3, 4, 5, 6, 7, 8]
         channels = _normalize_step_channels(channels, f"Step {len(steps) + 1} channels")
+        if primary_channel is None and len(channels) == 1:
+            primary_channel = channels[0]
         steps.append(
             {
                 "id": f"step-{len(steps) + 1}",
@@ -275,9 +351,50 @@ def _parse_method_text(content: str) -> list[dict[str, Any]]:
                 "flow_unit": match.group("flow_unit"),
                 "direction": direction,
                 "channels": channels,
+                "primary_channel": primary_channel,
             }
         )
     return steps
+
+
+def _resolve_loaded_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    with state.lock:
+        channel_config = dict(state.channel_config)
+    channel_by_solution = {
+        _solution_key(value.get("name")): channel
+        for channel, value in channel_config.items()
+        if _solution_key(value.get("name"))
+    }
+    for step in steps:
+        if step.get("step_type") == "pause":
+            continue
+        solution_name = step.get("solution_name")
+        saved_channel = step.get("primary_channel")
+        matched_channel = None
+        if saved_channel is not None:
+            saved_channel = int(saved_channel)
+            saved_channel_name = channel_config.get(saved_channel, {}).get("name")
+            if _solution_key(saved_channel_name) == _solution_key(solution_name):
+                matched_channel = saved_channel
+        if matched_channel is None:
+            matched_channel = channel_by_solution.get(_solution_key(solution_name))
+        if matched_channel is not None:
+            step["primary_channel"] = matched_channel
+            step["channels"] = [matched_channel]
+        elif saved_channel is not None:
+            step["primary_channel"] = saved_channel
+            step["channels"] = [saved_channel]
+    return steps
+
+
+def _load_method_content(content: str) -> tuple[list[dict[str, Any]], str | None, str]:
+    steps = _resolve_loaded_steps(_parse_method_text(content))
+    mode = _current_mode()
+    has_solution_refs = any(step.get("solution_name") for step in steps)
+    warning = None
+    if mode == "pump_only" and has_solution_refs:
+        warning = "Loaded method contains solution references, but the app is in Pump-Only Mode. Those references will be ignored until a Valco is connected."
+    return steps, warning, mode
 
 
 @dataclass
@@ -305,6 +422,7 @@ class AppState:
     current_step_duration: float | None = None
     last_error: str = ""
     last_message: str = ""
+    latest_run_log: str | None = None
     stop_event: threading.Event = field(default_factory=threading.Event)
     pause_event: threading.Event = field(default_factory=threading.Event)
     run_thread: threading.Thread | None = None
@@ -355,6 +473,72 @@ class AppState:
 
 state = AppState()
 
+
+def _mark_pump_failed(name: str, error: Exception, results: dict[str, Any]) -> None:
+    pump_attr = "pump_a" if name == "pump_a" else "pump_b"
+    connected_attr = "pump_a_connected" if name == "pump_a" else "pump_b_connected"
+    port_attr = "pump_a_port" if name == "pump_a" else "pump_b_port"
+    device = getattr(state, pump_attr)
+    if device is not None:
+        try:
+            device.port.close()
+        except Exception:
+            pass
+    setattr(state, pump_attr, None)
+    setattr(state, connected_attr, False)
+    setattr(state, port_attr, None)
+    results[name] = {"ok": False, "error": str(error)}
+
+
+def _perform_heartbeat() -> dict[str, Any]:
+    results: dict[str, Any] = {
+        "ok": True,
+        "skipped": False,
+        "pump_a": {"ok": state.pump_a_connected},
+        "pump_b": {"ok": state.pump_b_connected},
+        "valco": {"ok": state.valco_connected},
+    }
+    with state.lock:
+        if state.running:
+            results["skipped"] = True
+            results["reason"] = "Run in progress"
+            return results
+
+        had_pump = state.pump_a_connected or state.pump_b_connected
+        had_valco = state.valco_connected
+        if state.pump_a is not None:
+            try:
+                results["pump_a"] = {"ok": True, "protocol_version": state.pump_a.handshake()}
+            except Exception as exc:
+                _mark_pump_failed("pump_a", exc, results)
+        if state.pump_b is not None:
+            try:
+                results["pump_b"] = {"ok": True, "protocol_version": state.pump_b.handshake()}
+            except Exception as exc:
+                _mark_pump_failed("pump_b", exc, results)
+        if state.valco is not None:
+            try:
+                response = state.valco.raw_command("CP")
+                state.valco_position = state.valco._parse_position(response)
+                results["valco"] = {"ok": True, "position": state.valco_position}
+            except Exception as exc:
+                try:
+                    state.valco.port.close()
+                except Exception:
+                    pass
+                state.valco = None
+                state.valco_connected = False
+                state.valco_port = None
+                state.valco_position = None
+                results["valco"] = {"ok": False, "error": str(exc)}
+
+        state.mode = _current_mode()
+        if had_pump and not state.pump_a_connected and not state.pump_b_connected:
+            results["ok"] = False
+            state.last_error = "Hardware heartbeat lost all pump connections."
+        elif had_valco and not state.valco_connected:
+            results["ok"] = False
+        return results
 
 
 def _current_mode() -> str:
@@ -461,10 +645,30 @@ def _stop_pump() -> None:
 
 
 def _run_method(payload: dict[str, Any]) -> None:
+    run_log_path = RUN_LOGS_DIR / f"run-{_timestamp_slug()}.csv"
+    run_log_rows: list[dict[str, Any]] = []
+
+    def log_event(event: str, message: str = "", step: dict[str, Any] | None = None, **extra: Any) -> None:
+        row = {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "event": event,
+            "step": step.get("index") if step else "",
+            "message": message,
+            "solution": step.get("solution_name", "") if step else "",
+            "channels": ",".join(str(channel) for channel in step.get("channels", [])) if step else "",
+            "valco_output": step.get("output_position", "") if step else "",
+            "duration_s": extra.get("duration_s", ""),
+            "volume_ml": step.get("volume_ml", "") if step else "",
+            "flow_ml_min": step.get("flow_mlpmin", "") if step else "",
+            "rpm": ",".join(f"{channel}:{rpm:.3g}" for channel, rpm in step.get("channel_rpms", {}).items()) if step else "",
+        }
+        run_log_rows.append(row)
+
     try:
         steps, solution_config, channel_config, valco_output_config, bed_volume_ml, calibration_m, calibration_b, mode = _validate_run_payload(payload)
         channel_select_mode = mode == "channel_select"
         pump_only_mode = mode == "pump_only"
+        log_event("run_start", f"Mode: {mode}")
 
         def _pump_for_channel(channel: int) -> reglo_ICC:
             if 1 <= channel <= 4:
@@ -507,11 +711,12 @@ def _run_method(payload: dict[str, Any]) -> None:
             if rpm < 0:
                 raise ValueError(f"Step {index} requires {rpm:.2f} RPM, which is below zero. Check calibration and flow rate.")
 
-        previous_category = None
+        previous_step_category = None
         expanded_steps: list[dict[str, Any]] = []
         for index, step in enumerate(steps, start=1):
             if step.get("step_type") == "pause":
                 expanded_steps.append({"index": index, "step_type": "pause", "duration": step.get("duration", 0)})
+                previous_step_category = None
                 continue
 
             flow_mlpmin = _step_to_flow_mlpmin(step, bed_volume_ml, calibration_m, calibration_b)[0]
@@ -539,22 +744,23 @@ def _run_method(payload: dict[str, Any]) -> None:
                     _normalize_solution_category(channel_config.get(channel, {}).get("category"))
                     for channel in channels
                 ]
-                for current_category in categories:
-                    if previous_category == "Acid" and current_category == "Base":
+                current_step_category = categories[0] if categories else "Other"
+                if previous_step_category in {"Acid", "Base"} and current_step_category in {"Acid", "Base"}:
+                    if previous_step_category == "Acid" and current_step_category == "Base":
                         raise ValueError(f"Step {index} is Base after an Acid step. Acid/base adjacency is not allowed.")
-                    if previous_category == "Base" and current_category == "Acid":
+                    if previous_step_category == "Base" and current_step_category == "Acid":
                         raise ValueError(f"Step {index} is Acid after a Base step. Acid/base adjacency is not allowed.")
-                    if current_category in {"Acid", "Base"}:
-                        previous_category = current_category
 
                 primary_name = _format_solution_name(channel_config.get(primary_channel, {}))
                 solution_name = primary_name or f"Channel {primary_channel}"
-                category = categories[0] if categories else "Other"
+                category = current_step_category
             else:
                 channels = step["channels"]
                 rpm = _rpm_for_step_flow(step, flow_mlpmin, calibration_m, calibration_b)
                 flow_mlpmin = _flow_from_rpm(rpm, calibration_m, calibration_b)
                 channel_rpms = {channel: rpm for channel in channels}
+
+            previous_step_category = category if category in {"Acid", "Base"} else None
 
             for channel, rpm in channel_rpms.items():
                 validate_rpm(index, rpm)
@@ -581,6 +787,7 @@ def _run_method(payload: dict[str, Any]) -> None:
             state.time_remaining = None
             state.last_error = ""
             state.last_message = "Run started."
+            state.latest_run_log = str(run_log_path)
             state.stop_event.clear()
 
         for step in expanded_steps:
@@ -589,6 +796,7 @@ def _run_method(payload: dict[str, Any]) -> None:
 
             if step.get("step_type") == "pause":
                 duration = step.get("duration", 0)
+                log_event("pause_start", "Pause step started.", step, duration_s=duration)
                 with state.lock:
                     state.current_step_index = step["index"]
                     state.current_step_label = f"Step {step['index']}: Paused - Waiting for Resume"
@@ -599,6 +807,7 @@ def _run_method(payload: dict[str, Any]) -> None:
                 _stop_pump()
                 state.pause_event.wait(timeout=duration)
                 state.pause_event.clear()
+                log_event("pause_complete", "Pause step completed.", step, duration_s=duration)
 
                 with state.lock:
                     state.is_paused = False
@@ -606,11 +815,12 @@ def _run_method(payload: dict[str, Any]) -> None:
                 continue
 
             duration_seconds = (step["volume_ml"] / step["flow_mlpmin"]) * 60.0
+            log_event("step_start", "Flow step started.", step, duration_s=duration_seconds)
             with state.lock:
                 state.current_step_index = step["index"]
                 if channel_select_mode:
                     state.current_step_label = (
-                        f"Step {step['index']}: Flow {step['volume_ml']:.3g} mL via {step['solution_name']} "
+                        f"Step {step['index']}: Flow {step['volume_ml']:.3g} mL of {step['solution_name']} "
                         f"at {step['flow_mlpmin']:.3g} mL/min to {output_label(step['output_position'])}"
                     )
                 else:
@@ -625,6 +835,7 @@ def _run_method(payload: dict[str, Any]) -> None:
 
             if state.valco is not None and step.get("output_position") is not None:
                 output_position = int(step["output_position"])
+                log_event("valve_move", f"Moving valve to {output_label(output_position)}.", step)
                 with state.lock:
                     state.valco_changing = state.valco_position != output_position
                 state.valco.set_position(output_position)
@@ -658,7 +869,9 @@ def _run_method(payload: dict[str, Any]) -> None:
 
             _stop_pump()
             if state.stop_event.is_set():
+                log_event("step_stopped", "Flow step stopped by user.", step, duration_s=duration_seconds)
                 break
+            log_event("step_complete", "Flow step completed.", step, duration_s=duration_seconds)
 
         with state.lock:
             state.running = False
@@ -669,11 +882,15 @@ def _run_method(payload: dict[str, Any]) -> None:
             state.pump_b_active = False
             state.valco_changing = False
             if state.stop_event.is_set():
+                log_event("run_stopped", "Run stopped by user.")
                 state.last_message = "Run stopped by user."
             else:
+                log_event("run_complete", "Run completed.")
                 state.last_message = "Run completed."
             state.stop_event.clear()
+        _write_run_log(run_log_path, run_log_rows)
     except Exception as exc:
+        log_event("run_error", str(exc))
         _stop_pump()
         with state.lock:
             state.running = False
@@ -685,7 +902,9 @@ def _run_method(payload: dict[str, Any]) -> None:
             state.valco_changing = False
             state.last_error = str(exc)
             state.last_message = ""
+            state.latest_run_log = str(run_log_path)
             state.stop_event.clear()
+        _write_run_log(run_log_path, run_log_rows)
 
 
 @app.route("/")
@@ -722,6 +941,9 @@ def connect() -> Any:
             pump_b = reglo_ICC(pump_b_port, reply=False)
             pump_b.reply = False
     except Exception as exc:
+        for device in (pump_a, pump_b):
+            if device is not None and getattr(device, "port", None):
+                device.port.close()
         with state.lock:
             state.close_devices()
             state.last_error = f"Pump connection failed: {exc}"
@@ -806,6 +1028,11 @@ def status() -> Any:
                 "current_step_duration": state.current_step_duration,
             }
         )
+
+
+@app.post("/heartbeat")
+def heartbeat() -> Any:
+    return jsonify(_perform_heartbeat())
 
 
 @app.post("/pause_ack")
@@ -919,10 +1146,54 @@ def save_method() -> Any:
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
 
-    lines = [_serialize_step(step) for step in steps]
+    channel_config_payload = payload.get("channel_config", {}) or {}
+    channel_config: dict[int, dict[str, Any]] = {}
+    for channel in range(1, 9):
+        entry = channel_config_payload.get(str(channel), channel_config_payload.get(channel, {})) or {}
+        channel_config[channel] = {
+            "name": _format_solution_name(entry),
+            "category": _normalize_solution_category(entry.get("category")),
+        }
+
+    lines = [_serialize_step(step, channel_config) for step in steps]
     target = METHODS_DIR / filename
     target.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
     return jsonify({"ok": True, "path": str(target), "filename": filename})
+
+
+@app.get("/methods")
+def list_methods() -> Any:
+    return jsonify({"ok": True, "methods": _method_files()})
+
+
+@app.get("/methods/<path:filename>")
+def load_saved_method(filename: str) -> Any:
+    safe_filename = secure_filename(filename)
+    if not safe_filename:
+        return jsonify({"ok": False, "error": "Invalid filename."}), 400
+    target = METHODS_DIR / safe_filename
+    if not target.exists() or not target.is_file():
+        return jsonify({"ok": False, "error": "Method not found."}), 404
+    try:
+        steps, warning, mode = _load_method_content(target.read_text(encoding="utf-8", errors="replace"))
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    with state.lock:
+        state.last_message = f"Loaded {safe_filename}."
+        state.last_error = ""
+    return jsonify({"ok": True, "steps": steps, "warning": warning, "mode": mode, "filename": safe_filename})
+
+
+@app.delete("/methods/<path:filename>")
+def delete_saved_method(filename: str) -> Any:
+    safe_filename = secure_filename(filename)
+    if not safe_filename:
+        return jsonify({"ok": False, "error": "Invalid filename."}), 400
+    target = METHODS_DIR / safe_filename
+    if not target.exists() or not target.is_file():
+        return jsonify({"ok": False, "error": "Method not found."}), 404
+    target.unlink()
+    return jsonify({"ok": True, "filename": safe_filename})
 
 
 @app.post("/load_method")
@@ -933,21 +1204,32 @@ def load_method() -> Any:
     file = request.files["file"]
     content = file.read().decode("utf-8", errors="replace")
     try:
-        steps = _parse_method_text(content)
+        steps, warning, mode = _load_method_content(content)
     except ValueError as exc:
         return jsonify({"ok": False, "error": str(exc)}), 400
-
-    mode = _current_mode()
-    has_solution_refs = any(step.get("solution_name") for step in steps)
-    warning = None
-    if mode == "pump_only" and has_solution_refs:
-        warning = "Loaded method contains solution references, but the app is in Pump-Only Mode. Those references will be ignored until a Valco is connected."
 
     with state.lock:
         state.last_message = "Method loaded."
         state.last_error = ""
 
     return jsonify({"ok": True, "steps": steps, "warning": warning, "mode": mode})
+
+
+@app.get("/run_logs/latest.csv")
+def latest_run_log() -> Any:
+    with state.lock:
+        latest_path = Path(state.latest_run_log) if state.latest_run_log else None
+    if latest_path is None or not latest_path.exists():
+        logs = _run_log_files()
+        latest_path = logs[0] if logs else None
+    if latest_path is None or not latest_path.exists():
+        return jsonify({"ok": False, "error": "No run logs are available yet."}), 404
+    content = latest_path.read_text(encoding="utf-8", errors="replace")
+    return Response(
+        content,
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{latest_path.name}"'},
+    )
 
 
 if __name__ == "__main__":

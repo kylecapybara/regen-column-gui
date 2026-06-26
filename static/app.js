@@ -12,6 +12,8 @@ const state = {
   valcoPosition: null,
   valcoChanging: false,
   connectedPreview: false,
+  showRpmReadout: false,
+  methods: [],
   mode: 'pump_only',
   bedVolumeMl: 100,
   calibration: { m: 0.1694, b: -0.727 },
@@ -330,7 +332,7 @@ function renderSteps() {
     return `
       <div class="step-row" data-step-id="${step.id}" draggable="true">
         <div class="drag-handle">⠿</div>
-        <div class="step-fields ${pumpOnlyMode ? 'pump-only' : ''}">
+        <div class="step-fields ${pumpOnlyMode ? 'pump-only' : ''} ${state.showRpmReadout ? 'show-rpm' : 'hide-rpm'}">
           <label>
             <span>Type</span>
             <select data-field="step_type">
@@ -394,17 +396,20 @@ function renderSteps() {
             </select>
           </label>
 
-          <div class="${rpmClass}">${rpmLabel}</div>
+          ${state.showRpmReadout ? `<div class="${rpmClass}">${rpmLabel}</div>` : ''}
           ` : `
           <label>
             <span>Duration (s)</span>
             <input data-field="duration" type="number" min="0" step="0.1" value="${escapeHtml(String(step.duration || ''))}">
           </label>
+          ${state.showRpmReadout ? `
           <div style="flex-grow: 1"></div>
           <div class="rpm-display">Pause Step</div>
+          ` : ''}
           `}
         </div>
         <div class="step-actions">
+          <button type="button" data-action="duplicate">Duplicate</button>
           <button type="button" data-action="up">▲</button>
           <button type="button" data-action="down">▼</button>
           <button type="button" data-action="delete" class="danger-button">✕</button>
@@ -419,10 +424,6 @@ function renderSteps() {
   el.stepsContainer.querySelectorAll('[data-field]').forEach((field) => {
     field.addEventListener('input', handleStepChange);
     field.addEventListener('change', handleStepChange);
-  });
-
-  el.stepsContainer.querySelectorAll('[data-action]').forEach((button) => {
-    button.addEventListener('click', handleStepAction);
   });
 
   el.stepsContainer.querySelectorAll('.step-row').forEach(row => {
@@ -814,6 +815,11 @@ function handleStepAction(event) {
   const action = event.target.dataset.action;
   if (action === 'delete') {
     state.steps.splice(index, 1);
+  } else if (action === 'duplicate') {
+    state.steps.splice(index + 1, 0, {
+      ...JSON.parse(JSON.stringify(state.steps[index])),
+      id: makeId(),
+    });
   } else if (action === 'up' && index > 0) {
     [state.steps[index - 1], state.steps[index]] = [state.steps[index], state.steps[index - 1]];
   } else if (action === 'down' && index < state.steps.length - 1) {
@@ -917,9 +923,24 @@ async function saveMethod() {
       }),
     });
     setBanner(`Saved method to ${data.filename}.`, '');
+    await refreshMethodLibrary();
   } catch (error) {
     setBanner('', error.message);
   }
+}
+
+function applyLoadedMethod(data) {
+  state.steps = (data.steps || []).map((step) => ({
+    ...stepTemplate(),
+    ...step,
+    id: makeId(),
+    direction: normalizeDirection(step.direction),
+    channels: normalizeChannels(step.channels),
+    primary_channel: step.primary_channel || 1,
+    valco_output_position: step.valco_output_position || 1,
+  }));
+  setBanner(data.warning || 'Method loaded.', '');
+  renderSteps();
 }
 
 async function loadMethodFromFile(file) {
@@ -933,22 +954,79 @@ async function loadMethodFromFile(file) {
   if (!response.ok) {
     throw new Error(data.error || 'Load failed');
   }
-  state.steps = (data.steps || []).map((step) => ({
-    ...stepTemplate(),
-    ...step,
-    id: makeId(),
-    direction: normalizeDirection(step.direction),
-    channels: normalizeChannels(step.channels),
-    primary_channel: step.primary_channel || 1,
-    valco_output_position: step.valco_output_position || 1,
-  }));
-  if (data.warning) {
-    setBanner(data.warning, '');
-  } else {
-    setBanner('Method loaded.', '');
-  }
-  renderSteps();
+  applyLoadedMethod(data);
   await syncStatus();
+}
+
+async function refreshMethodLibrary() {
+  if (!el.methodLibraryList) return;
+  try {
+    const data = await fetchJson('/methods', { method: 'GET', headers: {} });
+    state.methods = data.methods || [];
+    renderMethodLibrary();
+  } catch (error) {
+    el.methodLibraryList.innerHTML = `<div class="inline-message error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderMethodLibrary() {
+  if (!el.methodLibraryList) return;
+  if (!state.methods.length) {
+    el.methodLibraryList.innerHTML = '<div class="inline-message">No saved methods yet.</div>';
+    return;
+  }
+  el.methodLibraryList.innerHTML = state.methods.map((method) => `
+    <div class="library-row">
+      <div>
+        <strong>${escapeHtml(method.filename)}</strong>
+        <span>${escapeHtml(method.modified_label || '')}</span>
+      </div>
+      <div class="library-actions">
+        <button type="button" data-method-load="${escapeHtml(method.filename)}">Load</button>
+        <button type="button" class="danger-button" data-method-delete="${escapeHtml(method.filename)}">Delete</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function openMethodLibrary() {
+  el.methodLibraryModal.classList.remove('hidden');
+  await refreshMethodLibrary();
+}
+
+async function loadSavedMethod(filename) {
+  const data = await fetchJson(`/methods/${encodeURIComponent(filename)}`, { method: 'GET', headers: {} });
+  applyLoadedMethod(data);
+  el.methodLibraryModal.classList.add('hidden');
+  await syncStatus();
+}
+
+async function deleteSavedMethod(filename) {
+  if (!window.confirm(`Delete ${filename}?`)) {
+    return;
+  }
+  await fetchJson(`/methods/${encodeURIComponent(filename)}`, { method: 'DELETE', body: JSON.stringify({}) });
+  await refreshMethodLibrary();
+  setBanner(`Deleted ${filename}.`, '');
+}
+
+function exportLatestRunLog() {
+  window.location.href = '/run_logs/latest.csv';
+}
+
+function renderValveOutputMap() {
+  if (!el.valveMapGrid) return;
+  el.valveMapGrid.innerHTML = state.valcoOutputs.map((output) => `
+    <div class="valve-map-item">
+      <span>${output.position}</span>
+      <strong>${escapeHtml(output.label || 'Unassigned')}</strong>
+    </div>
+  `).join('');
+}
+
+function openValveMap() {
+  renderValveOutputMap();
+  el.valveMapModal.classList.remove('hidden');
 }
 
 async function runMethod() {
@@ -995,6 +1073,21 @@ async function resumeMethod() {
   }
 }
 
+async function syncHeartbeat() {
+  if (state.running) {
+    return;
+  }
+  try {
+    const data = await fetchJson('/heartbeat', { method: 'POST', body: JSON.stringify({}) });
+    if (!data.skipped && data.ok === false) {
+      setBanner('', 'Hardware heartbeat lost a connection.');
+    }
+    await syncStatus();
+  } catch (error) {
+    setBanner('', error.message);
+  }
+}
+
 function addStep() {
   state.steps.push(stepTemplate());
   renderSteps();
@@ -1006,6 +1099,8 @@ function installEvents() {
   el.addStepBtn.addEventListener('click', addStep);
   el.saveMethodBtn.addEventListener('click', saveMethod);
   el.loadMethodBtn.addEventListener('click', () => el.methodFileInput.click());
+  el.openMethodLibraryBtn.addEventListener('click', openMethodLibrary);
+  el.exportRunLogBtn.addEventListener('click', exportLatestRunLog);
   el.methodFileInput.addEventListener('change', async () => {
     const file = el.methodFileInput.files && el.methodFileInput.files[0];
     if (!file) {
@@ -1074,6 +1169,14 @@ function installEvents() {
     });
   }
 
+  if (el.showRpmSwitch) {
+    el.showRpmSwitch.addEventListener('change', (event) => {
+      state.showRpmReadout = event.target.checked;
+      localStorage.setItem('show-rpm-readout', state.showRpmReadout ? 'true' : 'false');
+      renderSteps();
+    });
+  }
+
   if (el.openChannelsModalBtn) {
     el.openChannelsModalBtn.addEventListener('click', () => {
       el.channelsModal.classList.remove('hidden');
@@ -1093,6 +1196,37 @@ function installEvents() {
   if (el.closeValcoOutputsModalBtn) {
     el.closeValcoOutputsModalBtn.addEventListener('click', () => {
       el.valcoOutputsModal.classList.add('hidden');
+    });
+  }
+  if (el.openValveMapBtn) {
+    el.openValveMapBtn.addEventListener('click', openValveMap);
+  }
+  if (el.closeValveMapBtn) {
+    el.closeValveMapBtn.addEventListener('click', () => {
+      el.valveMapModal.classList.add('hidden');
+    });
+  }
+  if (el.closeMethodLibraryBtn) {
+    el.closeMethodLibraryBtn.addEventListener('click', () => {
+      el.methodLibraryModal.classList.add('hidden');
+    });
+  }
+  if (el.refreshMethodLibraryBtn) {
+    el.refreshMethodLibraryBtn.addEventListener('click', refreshMethodLibrary);
+  }
+  if (el.methodLibraryList) {
+    el.methodLibraryList.addEventListener('click', async (event) => {
+      const loadButton = event.target.closest('[data-method-load]');
+      const deleteButton = event.target.closest('[data-method-delete]');
+      try {
+        if (loadButton) {
+          await loadSavedMethod(loadButton.dataset.methodLoad);
+        } else if (deleteButton) {
+          await deleteSavedMethod(deleteButton.dataset.methodDelete);
+        }
+      } catch (error) {
+        setBanner('', error.message);
+      }
     });
   }
 
@@ -1120,12 +1254,14 @@ function cacheElements() {
     'themeSelect', 'modeBadge', 'connectionBadge', 'refreshPortsBtn', 'pumpAPortSelect', 'pumpBPortSelect', 'valcoPortSelect', 'connectBtn',
     'pumpADot', 'pumpBDot', 'valcoDot', 'pumpAStatusText', 'pumpBStatusText', 'valcoStatusText', 'connectMessage', 'bedVolumeInput',
     'bedVolumeReadout', 'totalTime', 'totalVolumeMl', 'totalVolumeBv', 'openCalibrationBtn', 'editCalibrationBtn', 'conversionSettingsPanel', 'calibrationPanel', 'solutionsPanel', 'solutionsGrid', 'stepsContainer',
-    'saveMethodBtn', 'loadMethodBtn', 'methodFileInput', 'addStepBtn', 'methodWarning', 'runMethodBtn',
+    'saveMethodBtn', 'loadMethodBtn', 'openMethodLibraryBtn', 'exportRunLogBtn', 'methodFileInput', 'addStepBtn', 'methodWarning', 'runMethodBtn',
     'stopMethodBtn', 'runStateText', 'currentStepText', 'timeRemainingText', 'runError', 'runMessage',
     'saveCalibrationBtn', 'calibrationSlopeInput', 'calibrationInterceptInput',
     'cancelCalibrationBtn', 'resumeMethodBtn', 'channelsModal', 'openChannelsModalBtn', 'closeChannelsModalBtn', 'channelsGrid', 'valcoOutputsGrid',
     'openValcoOutputsModalBtn', 'closeValcoOutputsModalBtn', 'valcoOutputsModal',
-    'pumpADevice', 'pumpBDevice', 'valveDevice', 'pumpAActivityText', 'pumpBActivityText', 'valveActivityText', 'valvePositionText', 'connectedPreviewSwitch'
+    'methodLibraryModal', 'methodLibraryList', 'closeMethodLibraryBtn', 'refreshMethodLibraryBtn',
+    'openValveMapBtn', 'valveMapModal', 'closeValveMapBtn', 'valveMapGrid',
+    'pumpADevice', 'pumpBDevice', 'valveDevice', 'pumpAActivityText', 'pumpBActivityText', 'valveActivityText', 'valvePositionText', 'connectedPreviewSwitch', 'showRpmSwitch'
   ].forEach((id) => {
     el[id] = document.getElementById(id);
   });
@@ -1144,6 +1280,11 @@ async function boot() {
     }
   }
 
+  state.showRpmReadout = localStorage.getItem('show-rpm-readout') === 'true';
+  if (el.showRpmSwitch) {
+    el.showRpmSwitch.checked = state.showRpmReadout;
+  }
+
   installEvents();
   state.steps = [stepTemplate()];
   await refreshPorts();
@@ -1152,8 +1293,11 @@ async function boot() {
   renderSolutions();
   renderChannelConfig();
   renderValcoOutputs();
+  renderValveOutputMap();
+  await refreshMethodLibrary();
   setInterval(syncStatus, 650);
   setInterval(renderProgressBars, 200);
+  setInterval(syncHeartbeat, 5000);
 }
 
 boot().catch((error) => {

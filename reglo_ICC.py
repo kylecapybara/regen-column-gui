@@ -22,13 +22,14 @@ class reglo_ICC():
     chs = [1,2,3,4]
 
     def __init__(self,COM_port,reply=True):
-        # Initialization function for reglo_ICC object. Takes a string for the 
+        # Initialization function for reglo_ICC object. Takes a string for the
         # port (e.g. "COM1"). "reply" sets whether responses and messages are
         # printed into the command line, default is "True".
-        
+
         # Initializes the serial port, runs the setup, and gets the current
         # calibrations.
-        
+
+        self.reply = reply
         self.port = serial.Serial(
             port=COM_port,
             baudrate=9600,
@@ -37,19 +38,33 @@ class reglo_ICC():
             parity="N",
             timeout=1
             )
-        self.setup()
-        self.get_calibration()
-        self.reply = reply
+        try:
+            self.handshake()
+            self.setup()
+            self.get_calibration()
+        except Exception:
+            self.port.close()
+            raise
 
     def raw_command(self,code):
         # Function for sending a command (as string) to the pump. Encodes to binary
         # and adds CR, and then returns reponse
-        
+
         self.port.reset_input_buffer()
         self.port.write(code.encode()+self.CR)
         response = self.port.readline().decode()
         if len(response) > 2:
             response = response[:-2]
+        return response
+
+    def handshake(self):
+        # Protocol command 0! returns the serial protocol version, e.g. "2".
+        response = self.raw_command("0!").strip()
+        if not response or response == "#":
+            raise ConnectionError("Reglo ICC did not respond to protocol handshake.")
+        if not response.isdigit():
+            raise ConnectionError(f"Unexpected Reglo ICC handshake response: {response!r}")
+        self.protocol_version = response
         return response
 
     def setup(self,address=1):
@@ -72,9 +87,9 @@ class reglo_ICC():
             print("Calibration set failed")
         else:
             self.calibration[channel] = new_calibration
-        
+
     def set_calibration_all(self,data):
-        # Sets the calibration for all channels, calibration data taken either 
+        # Sets the calibration for all channels, calibration data taken either
         # as a list of calibrations, or as a dictionary with channels as keys.
         if type(data) == dict:
             self.calibration = data
@@ -89,7 +104,7 @@ class reglo_ICC():
         print("Current Calibration:")
         for ch in self.chs:
             print(f" - Channel {ch}: {self.calibration[ch]:.3g} nL/step")
-    
+
     def reset_calibration(self,which=[1,2,3,4]):
         # Resets calibration factors for channels specified by "which". Default
         # is all channels reset.
@@ -99,7 +114,7 @@ class reglo_ICC():
             print("Calibration data reset")
 
     def command_all(self,command,which=[1,2,3,4]):
-        # Sends a command to multiple channels, specified by "which". Default 
+        # Sends a command to multiple channels, specified by "which". Default
         # is all channels.
         responses = list()
         for ch in which:
@@ -113,13 +128,13 @@ class reglo_ICC():
                     print("command NOT excecuted successfully")
                 else:
                     print(response)
-        
+
         return responses
 
 if __name__ == "__main__":
     # For testing. Only run if this file is the main script being run.
     # This is NOT run when this file is imported as a module.
-    
+
     reglo = reglo_ICC("COM6")
     #reglo.reset_calibration()
     reglo.print_calibration()
@@ -127,7 +142,7 @@ if __name__ == "__main__":
     if True:
         print("Setting all channels to Flow Rate mode")
         reglo.command_all("M")
-        
+
         print("Setting all channels to 1.65 mm ID tubing")
         reglo.command_all("+0165")
 

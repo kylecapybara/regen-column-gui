@@ -150,7 +150,7 @@ body {
 }
 
 .page-shell {
-  width: min(1320px, calc(100vw - 32px));
+  width: min(1680px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 24px 0 40px;
 }
@@ -693,8 +693,16 @@ button:focus {
   align-items: end;
 }
 
+.step-fields.hide-rpm {
+  grid-template-columns: 0.8fr 1.1fr 0.8fr auto 1.1fr 0.8fr 0.8fr 1.25fr;
+}
+
 .step-fields.pump-only {
   grid-template-columns: 1.1fr 0.8fr auto 1.1fr 0.8fr 0.8fr 1.25fr auto;
+}
+
+.step-fields.pump-only.hide-rpm {
+  grid-template-columns: 1.1fr 0.8fr auto 1.1fr 0.8fr 0.8fr 1.25fr;
 }
 
 .step-actions {
@@ -704,6 +712,10 @@ button:focus {
 
 .step-actions button {
   padding: 0.6rem 0.75rem;
+}
+
+.step-actions button[data-action="duplicate"] {
+  min-width: 84px;
 }
 
 .progress-container {
@@ -834,7 +846,77 @@ button:focus {
   margin: 0;
 }
 
+.library-list {
+  display: grid;
+  gap: 10px;
+}
+
+.library-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+
+.library-row strong,
+.library-row span {
+  display: block;
+}
+
+.library-row span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.86rem;
+}
+
+.library-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.valve-map-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.valve-map-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel-2);
+}
+
+.valve-map-item span {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--panel);
+  font-weight: 800;
+}
+
+.valve-map-item strong {
+  overflow-wrap: anywhere;
+}
+
 .preview-panel {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
   margin-top: 16px;
   padding: 14px 18px;
 }
