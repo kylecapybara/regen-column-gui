@@ -292,11 +292,13 @@ def _serialize_step(step: dict[str, Any], channel_config: dict[int, dict[str, An
     if not solution_name and primary_channel is not None and channel_config is not None:
         solution_name = _format_solution_name(channel_config.get(int(primary_channel), {}))
     solution_label = f" of ch{primary_channel}: {solution_name or f'Channel {primary_channel}'}" if primary_channel is not None else ""
-    return f"Flow {volume:g} {volume_unit}{solution_label} at {flow_rate:g} {flow_unit} {direction} ch:{channels_label}"
+    output_position = step.get("valco_output_position")
+    output_label = f" to:{int(output_position)}" if output_position not in (None, "") else ""
+    return f"Flow {volume:g} {volume_unit}{solution_label} at {flow_rate:g} {flow_unit} {direction} ch:{channels_label}{output_label}"
 
 
 STEP_PATTERN = re.compile(
-    r"^(?:Flow\s+(?P<volume>-?\d+(?:\.\d+)?)\s+(?P<volume_unit>mL|BV)(?:\s+of\s+(?P<solution>.+?)\s+at|\s+at)\s+(?P<flow_rate>-?\d+(?:\.\d+)?)\s+(?P<flow_unit>mL/min|BV/hr|RPM)(?:\s+(?P<direction>CW|CCW))?(?:\s+ch:(?P<channels>[1-8](?:,[1-8])*))?|Pause\s+(?P<duration>-?\d+(?:\.\d+)?)\s+s)$"
+    r"^(?:Flow\s+(?P<volume>-?\d+(?:\.\d+)?)\s+(?P<volume_unit>mL|BV)(?:\s+of\s+(?P<solution>.+?)\s+at|\s+at)\s+(?P<flow_rate>-?\d+(?:\.\d+)?)\s+(?P<flow_unit>mL/min|BV/hr|RPM)(?:\s+(?P<direction>CW|CCW))?(?:\s+ch:(?P<channels>[1-8](?:,[1-8])*))?(?:\s+to:(?P<valco_output_position>[1-6]))?|Pause\s+(?P<duration>-?\d+(?:\.\d+)?)\s+s)$"
 )
 
 SOLUTION_IDENTITY_PATTERN = re.compile(r"^ch\s*(?P<channel>[1-8])\s*:\s*(?P<name>.*)$", re.IGNORECASE)
@@ -340,6 +342,7 @@ def _parse_method_text(content: str) -> list[dict[str, Any]]:
         channels = _normalize_step_channels(channels, f"Step {len(steps) + 1} channels")
         if primary_channel is None and len(channels) == 1:
             primary_channel = channels[0]
+        valco_output_position = match.group("valco_output_position")
         steps.append(
             {
                 "id": f"step-{len(steps) + 1}",
@@ -352,6 +355,7 @@ def _parse_method_text(content: str) -> list[dict[str, Any]]:
                 "direction": direction,
                 "channels": channels,
                 "primary_channel": primary_channel,
+                "valco_output_position": int(valco_output_position) if valco_output_position is not None else None,
             }
         )
     return steps
@@ -670,20 +674,20 @@ def _run_method(payload: dict[str, Any]) -> None:
         pump_only_mode = mode == "pump_only"
         log_event("run_start", f"Mode: {mode}")
 
-        def _pump_for_channel(channel: int) -> reglo_ICC:
+        def _pump_for_channel(channel: int) -> tuple[reglo_ICC, int]:
             if 1 <= channel <= 4:
                 if state.pump_a is None:
                     raise ValueError("Pump A is not connected for channels 1-4.")
-                return state.pump_a
+                return state.pump_a, channel
             if 5 <= channel <= 8:
                 if state.pump_b is None:
                     raise ValueError("Pump B is not connected for channels 5-8.")
-                return state.pump_b
+                return state.pump_b, channel - 4
             raise ValueError(f"Channel {channel} is outside the supported range of 1-8.")
 
         def _command_pumps(command: str, channels: list[int]) -> None:
             pump_a_channels = [channel for channel in channels if 1 <= channel <= 4]
-            pump_b_channels = [channel for channel in channels if 5 <= channel <= 8]
+            pump_b_channels = [channel - 4 for channel in channels if 5 <= channel <= 8]
             if pump_a_channels and state.pump_a is not None:
                 state.pump_a.command_all(command, which=pump_a_channels)
             if pump_b_channels and state.pump_b is not None:
@@ -850,7 +854,8 @@ def _run_method(payload: dict[str, Any]) -> None:
             _command_pumps("L", step["channels"])
             for channel, rpm in step["channel_rpms"].items():
                 rpm_hundredths = int(round(rpm * 100))
-                _pump_for_channel(channel).command_all("S" + f"{rpm_hundredths:06d}", which=[channel])
+                pump, pump_channel = _pump_for_channel(channel)
+                pump.command_all("S" + f"{rpm_hundredths:06d}", which=[pump_channel])
             _command_pumps(direction_command, step["channels"])
             _command_pumps("H", step["channels"])
             with state.lock:
